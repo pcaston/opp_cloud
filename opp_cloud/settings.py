@@ -77,7 +77,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.mysql',
         'NAME': 'opp_cloud_db',
         'USER': 'opp_cloud_user',
-        'PASSWORD': 'your_password_here',
+        'PASSWORD': 'Ubewdy!0',
         'HOST': 'localhost',
         'PORT': '3306',
     }
