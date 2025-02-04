@@ -11,7 +11,8 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 import logging
 from pathlib import Path
-import os, sys
+import os
+import sys
 import toml
 
 # Set up logging
