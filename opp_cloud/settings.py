@@ -85,6 +85,7 @@ ALLOWED_HOSTS = ['127.0.0.1', 'openpeerpower.net', 'localhost']
 # Application definition
 
 INSTALLED_APPS = [
+    "daphne",  # Required for ASGI support
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
