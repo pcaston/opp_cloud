@@ -1,11 +1,12 @@
-import sys, os
+import os
+import sys
 
-# Add the directory containing your Django project to the Python path
-sys.path.append('/openpeerpower/opp_cloud')
+# Add project path
+sys.path.append('/home/senasnau/openpeerpower.net')  # Make sure Django can find the project
 
-# Set the DJANGO_SETTINGS_MODULE environment variable
-os.environ['DJANGO_SETTINGS_MODULE'] = 'opp_cloud.settings'
+# Set the correct settings module
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'opp_cloud.settings')
 
-# Create a WSGI application object
+# Load Django WSGI application (for HTTP requests)
 from django.core.wsgi import get_wsgi_application
 application = get_wsgi_application()

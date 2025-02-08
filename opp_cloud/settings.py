@@ -79,7 +79,7 @@ SECRET_KEY = secrets['django']['secret_key']
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['127.0.0.1', 'openpeerpower.net', 'localhost']
+ALLOWED_HOSTS = ['127.0.0.1', 'openpeerpower.net', 'www.openpeerpower.net', 'localhost']
 
 
 # Application definition
