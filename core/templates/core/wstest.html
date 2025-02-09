@@ -81,6 +81,54 @@
         let ws = null;
         let connectionAttempts = 0;
         const MAX_RECONNECT_ATTEMPTS = 3;
+        const messageQueue = [];
+        let processingQueue = false;
+
+        async function sendMessage(message) {
+            messageQueue.push(message);
+            if (!processingQueue) {
+                await processMessageQueue();
+            }
+        }
+
+        async function processMessageQueue() {
+            if (messageQueue.length === 0 || processingQueue) return;
+            
+            processingQueue = true;
+            while (messageQueue.length > 0) {
+                const message = messageQueue[0];
+                try {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify(message));
+                        messageQueue.shift(); // Remove sent message
+                        addLog(`Message sent: ${JSON.stringify(message)}`, 'debug');
+                    } else {
+                        throw new Error('WebSocket not connected');
+                    }
+                } catch (error) {
+                    addLog(`Failed to send message: ${error.message}`, 'error');
+                    break;
+                }
+                await new Promise(resolve => setTimeout(resolve, 100)); // Rate limiting
+            }
+            processingQueue = false;
+        }
+
+        let reconnectTimeout = 1000; // Start with 1 second
+        const MAX_RECONNECT_TIMEOUT = 30000; // Max 30 seconds
+        
+        function handleReconnection() {
+            if (connectionAttempts < MAX_RECONNECT_ATTEMPTS) {
+                addLog(`Reconnecting in ${reconnectTimeout/1000} seconds...`, 'info');
+                setTimeout(() => {
+                    reconnectTimeout = Math.min(reconnectTimeout * 2, MAX_RECONNECT_TIMEOUT);
+                    connect();
+                }, reconnectTimeout);
+            } else {
+                addLog('Max reconnection attempts reached', 'error');
+                reconnectTimeout = 1000; // Reset for next time
+            }
+        }
 
         // Update the WebSocket URL function to include instance_id
         function getWebSocketUrl() {
@@ -169,10 +217,43 @@
                     addLog('Connection established!', 'success');
                     addLog(`WebSocket ready state: ${ws.readyState}`, 'debug');
                     connectionAttempts = 0;
+                    updateStatus(true, `Connected to ${ws.url}`);
                     updateButtons(true);
                     updateDebugInfo();
+                    
+                    // Send initial handshake message
+                    try {
+                        ws.send(JSON.stringify({
+                            type: 'connection_init',
+                            instance_id: document.getElementById('connInstanceId').value.trim()
+                        }));
+                    } catch (error) {
+                        addLog(`Error sending initial handshake: ${error.message}`, 'error');
+                    }
+                    // Log the current state of UI elements
+                    addLog(`Connect button disabled: ${connectBtn.disabled}`, 'debug');
+                    addLog(`Disconnect button disabled: ${disconnectBtn.disabled}`, 'debug');
+                    addLog(`Status element text: ${document.getElementById('status').textContent}`, 'debug');
                 };
-                
+
+                function startHeartbeat() {
+                    const heartbeatInterval = setInterval(() => {
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            try {
+                                ws.send(JSON.stringify({ type: 'heartbeat' }));
+                                addLog('Heartbeat sent', 'debug');
+                            } catch (error) {
+                                addLog(`Heartbeat error: ${error.message}`, 'error');
+                                clearInterval(heartbeatInterval);
+                            }
+                        } else {
+                            clearInterval(heartbeatInterval);
+                        }
+                    }, 30000); // every 30 seconds
+                    
+                    return heartbeatInterval;
+                }
+
                 ws.onmessage = (e) => {
                     try {
                         const data = JSON.parse(e.data);
@@ -240,6 +321,7 @@
                     addLog(`Connection closed. Code: ${e.code} (${reason}), Reason: ${e.reason || 'No reason provided'}`, 'error');
                     addLog(`Was clean closure: ${e.wasClean}`, 'debug');
                     
+                    updateStatus(false, `Closed: ${reason}`);
                     updateButtons(false);
                     updateDebugInfo();
                     ws = null;
@@ -254,9 +336,19 @@
 
         function disconnect() {
             if (ws) {
-                ws.close();
-                updateButtons(false);
+                ws.close(1000, "User initiated disconnect");
+                addLog('Disconnecting...', 'info');
+                cleanupConnection();
             }
+        }
+        
+        function cleanupConnection() {
+            ws = null;
+            connectionAttempts = 0;
+            reconnectTimeout = 1000;
+            messageQueue.length = 0; // Clear message queue
+            updateButtons(false);
+            updateDebugInfo();
         }
 
         function registerDevice() {
@@ -311,7 +403,25 @@
             ws.send(JSON.stringify(message));
             addLog('Requesting registered devices list', 'info');
         }
-        
+
+        function updateStatus(connected, message = '') {
+            const statusElement = document.getElementById('status');
+            if (!statusElement) {
+                console.error('Status element not found');
+                return;
+            }
+            
+            statusElement.textContent = connected ? 'Connected' : 'Not Connected';
+            statusElement.style.color = connected ? 'green' : 'red';
+            
+            if (message) {
+                statusElement.textContent += ` - ${message}`;
+            }
+            
+            // Debug log the status update
+            addLog(`Status updated: ${statusElement.textContent}`, 'debug');
+        }
+
         // Initial debug info update
         updateDebugInfo();
     </script>
