@@ -72,6 +72,11 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
         print(f"Instance ID: {instance_id}")
 
         try:
+            # Also store the device ID in a list of registered devices
+            registered_devices = cache.get('registered_devices', set())
+            registered_devices.add(device_id)
+            cache.set('registered_devices', registered_devices)
+            
             cache.set(f"device_{device_id}", {
                 "user_name": user_name,
                 "instance_id": instance_id
@@ -122,7 +127,8 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
     async def get_registered_devices(self):
         print("\n=== Retrieving Registered Devices ===")
         try:
-            devices = [key.split("_")[1] for key in cache.keys("device_*")]
+            # Get the set of registered devices from cache
+            devices = list(cache.get('registered_devices', set()))
             print(f"Found devices: {devices}")
             
             await self.send(json.dumps({
