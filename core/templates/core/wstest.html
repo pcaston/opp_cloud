@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OppEnergy WebSocket Test</title>
+    <style>
+        /* Previous styles remain the same */
+        #log {
+            width: 100%;
+            height: 300px;
+            border: 1px solid #ccc;
+            margin: 10px 0;
+            padding: 10px;
+            overflow-y: scroll;
+            font-family: monospace;
+        }
+        .error { color: red; }
+        .success { color: green; }
+        .info { color: blue; }
+        .debug { color: purple; }
+        input {
+            width: 200px;
+            padding: 5px;
+            margin-right: 10px;
+        }
+        .control-panel {
+            margin: 10px 0;
+            padding: 10px;
+            border: 1px solid #eee;
+        }
+        #debugInfo {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #f5f5f5;
+            border: 1px solid #ddd;
+        }
+    </style>
+</head>
+<body>
+    <h1>OppEnergy WebSocket Test Page</h1>
+    
+    <div class="control-panel">
+        <h3>Connection</h3>
+        <input type="text" id="connInstanceId" placeholder="Instance ID for Connection" value="test123">
+        <button onclick="connect()" id="connectBtn">Connect</button>
+        <button onclick="disconnect()" id="disconnectBtn" disabled>Disconnect</button>
+        <button onclick="testConnection()" id="testConnBtn">Test Server Connection</button>
+        <span id="status">Not Connected</span>
+        <div id="debugInfo">
+            <strong>Debug Info:</strong><br>
+            Protocol: <span id="protocolInfo"></span><br>
+            Host: <span id="hostInfo"></span><br>
+            WebSocket URL: <span id="wsUrlInfo"></span><br>
+            WebSocket State: <span id="wsState"></span><br>
+            Instance ID: <span id="instanceInfo"></span>
+        </div>
+    </div>
+
+    <!-- Rest of the control panels remain the same -->
+    <div class="control-panel">
+        <h3>Device Registration</h3>
+        <input type="text" id="userName" placeholder="User Name">
+        <input type="text" id="deviceId" placeholder="Device ID">
+        <input type="text" id="instanceId" placeholder="Instance ID">
+        <button onclick="registerDevice()" id="registerBtn" disabled>Register Device</button>
+    </div>
+
+    <div class="control-panel">
+        <h3>Device Login</h3>
+        <input type="text" id="loginDeviceId" placeholder="Device ID">
+        <button onclick="login()" id="loginBtn" disabled>Login</button>
+    </div>
+
+    <div class="control-panel">
+        <h3>Device List</h3>
+        <button onclick="getRegisteredDevices()" id="listDevicesBtn" disabled>Get Registered Devices</button>
+    </div>
+
+    <div id="log"></div>
+
+    <script>
+        let ws = null;
+        let connectionAttempts = 0;
+        const MAX_RECONNECT_ATTEMPTS = 3;
+
+        // Update the WebSocket URL function to include instance_id
+        function getWebSocketUrl() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const instanceId = document.getElementById('connInstanceId').value.trim() || 'test123';
+            return `${protocol}//${window.location.host}/ws/opp_energy/${instanceId}/`;
+        }
+
+        // Add a server connection test function
+        async function testConnection() {
+            const httpProtocol = window.location.protocol;
+            const host = window.location.host;
+            const testUrl = `${httpProtocol}//${host}/`;
+            
+            addLog('Testing server connection...', 'info');
+            try {
+                const response = await fetch(testUrl);
+                if (response.ok) {
+                    addLog(`Server is accessible at ${testUrl}`, 'success');
+                } else {
+                    addLog(`Server returned status: ${response.status}`, 'error');
+                }
+            } catch (error) {
+                addLog(`Server connection test failed: ${error.message}`, 'error');
+            }
+        }
+
+        function addLog(message, type = 'info') {
+            const div = document.createElement('div');
+            div.className = type;
+            div.textContent = `${new Date().toLocaleTimeString()} - ${message}`;
+            log.appendChild(div);
+            log.scrollTop = log.scrollHeight;
+            console.log(`[${type}] ${message}`);
+        }
+
+        function updateDebugInfo() {
+            const instanceId = document.getElementById('connInstanceId').value.trim() || 'test123';
+            document.getElementById('protocolInfo').textContent = window.location.protocol;
+            document.getElementById('hostInfo').textContent = window.location.host;
+            document.getElementById('wsUrlInfo').textContent = getWebSocketUrl();
+            document.getElementById('wsState').textContent = ws ? ws.readyState : 'No WebSocket instance';
+            document.getElementById('instanceInfo').textContent = instanceId;
+        }
+
+        function updateButtons(connected) {
+            connectBtn.disabled = connected;
+            disconnectBtn.disabled = !connected;
+            registerBtn.disabled = !connected;
+            loginBtn.disabled = !connected;
+            listDevicesBtn.disabled = !connected;
+            document.getElementById('connInstanceId').disabled = connected;
+            status.textContent = connected ? 'Connected' : 'Not Connected';
+            status.style.color = connected ? 'green' : 'red';
+        }
+
+        function connect() {
+            const instanceId = document.getElementById('connInstanceId').value.trim();
+            if (!instanceId) {
+                addLog('Please enter an Instance ID for connection', 'error');
+                return;
+            }
+
+            if (connectionAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                addLog(`Maximum reconnection attempts (${MAX_RECONNECT_ATTEMPTS}) reached. Please check your connection and try again later.`, 'error');
+                connectionAttempts = 0;
+                return;
+            }
+
+            connectionAttempts++;
+            addLog(`Connection attempt ${connectionAttempts} of ${MAX_RECONNECT_ATTEMPTS}`, 'debug');
+            
+            const wsUrl = getWebSocketUrl();
+            addLog('Attempting to connect...', 'info');
+            addLog(`WebSocket URL: ${wsUrl}`, 'debug');
+            
+            try {
+                try {
+                    ws = new WebSocket(wsUrl);
+                } catch (error) {
+                    addLog(`WebSocket creation failed: ${error.message}`, 'error');
+                    return;
+                }
+                
+                ws.onopen = () => {
+                    addLog('Connection established!', 'success');
+                    addLog(`WebSocket ready state: ${ws.readyState}`, 'debug');
+                    connectionAttempts = 0;
+                    updateButtons(true);
+                    updateDebugInfo();
+                };
+                
+                ws.onmessage = (e) => {
+                    try {
+                        const data = JSON.parse(e.data);
+                        addLog(`Raw message received: ${e.data}`, 'debug');
+                        
+                        let message = '';
+                        switch(data.type) {
+                            case 'registration_success':
+                                message = `Registration successful: ${data.message}`;
+                                break;
+                            case 'login_success':
+                                message = `Login successful - User: ${data.user_name}, Instance: ${data.instance_id}`;
+                                break;
+                            case 'device_list':
+                                message = `Registered devices: ${data.devices.join(', ')}`;
+                                break;
+                            case 'error':
+                                message = `Error: ${data.message}`;
+                                break;
+                            default:
+                                message = JSON.stringify(data);
+                        }
+                        
+                        addLog(message, data.type === 'error' ? 'error' : 'success');
+                    } catch (error) {
+                        addLog(`Error parsing message: ${error.message}`, 'error');
+                        addLog(`Raw message: ${e.data}`, 'debug');
+                    }
+                };
+                
+                ws.onerror = (e) => {
+                    addLog('WebSocket error occurred', 'error');
+                    addLog(`WebSocket readyState: ${ws.readyState}`, 'debug');
+                    addLog(`Attempted URL: ${ws.url}`, 'debug');
+                    
+                    // Check if there's an error event with more details
+                    if (e instanceof ErrorEvent) {
+                        addLog(`Error message: ${e.message}`, 'error');
+                    }
+                    
+                    console.error('WebSocket error:', e);
+                    updateButtons(false);
+                    updateDebugInfo();
+                };
+                
+                ws.onclose = (e) => {
+                    const reasons = {
+                        1000: "Normal closure",
+                        1001: "Going away",
+                        1002: "Protocol error",
+                        1003: "Unsupported data",
+                        1005: "No status received",
+                        1006: "Abnormal closure",
+                        1007: "Invalid frame payload data",
+                        1008: "Policy violation",
+                        1009: "Message too big",
+                        1010: "Missing extension",
+                        1011: "Internal error",
+                        1012: "Service restart",
+                        1013: "Try again later",
+                        1015: "TLS handshake"
+                    };
+                    
+                    const reason = reasons[e.code] || "Unknown reason";
+                    addLog(`Connection closed. Code: ${e.code} (${reason}), Reason: ${e.reason || 'No reason provided'}`, 'error');
+                    addLog(`Was clean closure: ${e.wasClean}`, 'debug');
+                    
+                    updateButtons(false);
+                    updateDebugInfo();
+                    ws = null;
+                };
+                
+            } catch (error) {
+                addLog(`Error creating WebSocket: ${error.message}`, 'error');
+                updateButtons(false);
+                updateDebugInfo();
+            }
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                updateButtons(false);
+            }
+        }
+
+        function registerDevice() {
+            if (!ws) return;
+            
+            const userName = document.getElementById('userName').value.trim();
+            const deviceId = document.getElementById('deviceId').value.trim();
+            const instanceId = document.getElementById('instanceId').value.trim();
+            
+            if (!userName || !deviceId || !instanceId) {
+                addLog('Please fill in all registration fields', 'error');
+                return;
+            }
+            
+            const message = {
+                type: 'register_device',
+                user_name: userName,
+                device_id: deviceId,
+                instance_id: instanceId
+            };
+            
+            ws.send(JSON.stringify(message));
+            addLog(`Registering device: ${deviceId}`, 'info');
+        }
+
+        function login() {
+            if (!ws) return;
+            
+            const deviceId = document.getElementById('loginDeviceId').value.trim();
+            
+            if (!deviceId) {
+                addLog('Please enter a device ID', 'error');
+                return;
+            }
+            
+            const message = {
+                type: 'login',
+                device_id: deviceId
+            };
+            
+            ws.send(JSON.stringify(message));
+            addLog(`Attempting login for device: ${deviceId}`, 'info');
+        }
+
+        function getRegisteredDevices() {
+            if (!ws) return;
+            
+            const message = {
+                type: 'get_registered_devices'
+            };
+            
+            ws.send(JSON.stringify(message));
+            addLog('Requesting registered devices list', 'info');
+        }
+        
+        // Initial debug info update
+        updateDebugInfo();
+    </script>
+</body>
+</html>

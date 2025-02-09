@@ -9,6 +9,10 @@ def home(request):
     return render(request, 'core/home.html')
 
 @csrf_exempt
+def wstest(request):
+    return render(request, 'core/wstest.html')
+
+@csrf_exempt
 @login_required
 def register_instance(request):
     if request.method == 'POST':
