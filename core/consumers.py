@@ -1,10 +1,20 @@
+
+text/x-generic consumers.py ( Python script, ASCII text executable )
 import json
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.core.cache import cache  # Temporary storage for sessions
-from .models import HomeAssistantInstance, EnergyPrice
+from django.apps import apps
 
 class OppEnergyConsumer(AsyncWebsocketConsumer):
+    @property
+    def HomeAssistantInstance(self):
+        return apps.get_model('your_app_name', 'HomeAssistantInstance')
+    
+    @property
+    def EnergyPrice(self):
+        return apps.get_model('your_app_name', 'EnergyPrice')
+
     async def connect(self):
         print("\n=== WebSocket Connection Attempt ===")
         print(f"Scope URL Path: {self.scope['path']}")
