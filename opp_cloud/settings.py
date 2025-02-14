@@ -79,7 +79,7 @@ SECRET_KEY = secrets['django']['secret_key']
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['127.0.0.1', 'openpeerpower.net', 'www.openpeerpower.net', 'localhost']
+ALLOWED_HOSTS = ['127.0.0.1', 'openpeerpower.net', 'www.openpeerpower.net', 'www.openpeerpower.net.sen.asn.au', 'localhost']
 
 
 # Application definition
@@ -144,12 +144,15 @@ DATABASES = {
 # Channels settings
 ASGI_APPLICATION = 'opp_cloud.asgi.application'
 CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels_redis.core.RedisChannelLayer',
-        'CONFIG': {
-            "hosts": [('127.0.0.1', 6379)],
-        },
-    },
+    # 'default': {
+    #     'BACKEND': 'channels_redis.core.RedisChannelLayer',
+    #     'CONFIG': {
+    #         "hosts": [('127.0.0.1', 6379)],
+    #     },
+    # },
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer"
+    }
 }
 
 # Password validation
