@@ -36,7 +36,9 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
             print(f"Message type: {message_type}")
             print(f"Message data: {data}")
 
-            if message_type == "register_device":
+            if message_type == "connection_init":
+                await self.handle_connection_init(data)
+            elif message_type == "register_device":
                 await self.register_device(data)
             elif message_type == "login":
                 await self.login(data)
@@ -60,6 +62,18 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
                 "type": "error",
                 "message": "Internal server error"
             }))
+
+    async def handle_connection_init(self, data):
+        print("\n=== WebSocket Connection Init ===")
+        self.instance_id = data.get("instance_id", "Unknown")
+        print(f"Instance ID received: {self.instance_id}")
+
+        await self.send(json.dumps({
+            "type": "connection_ack",
+            "message": "Connection initialized successfully"
+        }))
+        print("Sent connection acknowledgment")
+
 
     async def register_device(self, data):
         print("\n=== Device Registration Attempt ===")
