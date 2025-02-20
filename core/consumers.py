@@ -1,29 +1,24 @@
+# consumers.py
 import json
+from datetime import datetime
+import asyncio
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
-from django.core.cache import cache  # Temporary storage for sessions
+from django.core.cache import cache
 from django.apps import apps
+from django.contrib.auth.hashers import check_password
 
 class OppEnergyConsumer(AsyncWebsocketConsumer):
-    @property
-    def HomeAssistantInstance(self):
-        return apps.get_model('your_app_name', 'HomeAssistantInstance')
-    
-    @property
-    def EnergyPrice(self):
-        return apps.get_model('your_app_name', 'EnergyPrice')
-
     async def connect(self):
         print("\n=== WebSocket Connection Attempt ===")
-        print(f"Scope URL Path: {self.scope['path']}")
-        print(f"URL Route kwargs: {self.scope['url_route']['kwargs']}")
-        print(f"Instance ID: {self.scope['url_route']['kwargs'].get('instance_id', 'Not provided')}")
-        
         try:
             await self.accept()
             print("WebSocket connection successfully accepted")
-            self.instance_id = self.scope['url_route']['kwargs'].get('instance_id')
-            print(f"Connection established for instance_id: {self.instance_id}")
+            self.authenticated = False
+            self.price_updates_task = None
+            self.ping_timeout_task = None
+            self.last_ping = datetime.now()
+            print("Connection established")
         except Exception as e:
             print(f"Error during connection: {str(e)}")
             raise
@@ -31,8 +26,10 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
     async def disconnect(self, close_code):
         print("\n=== WebSocket Disconnection ===")
         print(f"Close code: {close_code}")
-        if hasattr(self, 'instance_id'):
-            print(f"Instance ID that disconnected: {self.instance_id}")
+        if self.price_updates_task:
+            self.price_updates_task.cancel()
+        if hasattr(self, 'user_name'):
+            print(f"User disconnected: {self.user_name}")
 
     async def receive(self, text_data):
         print("\n=== Received WebSocket Message ===")
@@ -42,16 +39,13 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
             data = json.loads(text_data)
             message_type = data.get("type")
             print(f"Message type: {message_type}")
-            print(f"Message data: {data}")
 
-            if message_type == "connection_init":
-                await self.handle_connection_init(data)
-            elif message_type == "register_device":
-                await self.register_device(data)
-            elif message_type == "login":
-                await self.login(data)
-            elif message_type == "get_registered_devices":
-                await self.get_registered_devices()
+            if message_type == "ping":
+                await self.handle_ping()
+            elif message_type == "authenticate":
+                await self.handle_authentication(data)
+            elif message_type == "subscribe_prices":
+                await self.handle_price_subscription(data)
             else:
                 print(f"Unknown message type: {message_type}")
                 await self.send(json.dumps({
@@ -68,99 +62,136 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
             print(f"Error processing message: {str(e)}")
             await self.send(json.dumps({
                 "type": "error",
-                "message": "Internal server error"
+                "message": f"Internal server error: {str(e)}"
             }))
 
-    async def handle_connection_init(self, data):
-        print("\n=== WebSocket Connection Init ===")
-        self.instance_id = data.get("instance_id", "Unknown")
-        print(f"Instance ID received: {self.instance_id}")
-
-        await self.send(json.dumps({
-            "type": "connection_ack",
-            "message": "Connection initialized successfully"
-        }))
-        print("Sent connection acknowledgment")
-
-
-    async def register_device(self, data):
-        print("\n=== Device Registration Attempt ===")
-        user_name = data.get("user_name")
-        device_id = data.get("device_id")
-        instance_id = data.get("instance_id")
-        
-        print(f"User Name: {user_name}")
-        print(f"Device ID: {device_id}")
-        print(f"Instance ID: {instance_id}")
-
+    @database_sync_to_async
+    def verify_user_credentials(self, email, password):
+        """Verify user credentials against the database."""
+        User = apps.get_model('core', 'User')
         try:
-            # Also store the device ID in a list of registered devices
-            registered_devices = cache.get('registered_devices', set())
-            registered_devices.add(device_id)
-            cache.set('registered_devices', registered_devices)
-            
-            cache.set(f"device_{device_id}", {
-                "user_name": user_name,
-                "instance_id": instance_id
-            })
-            print(f"Device {device_id} successfully registered in cache")
-            
-            await self.send(json.dumps({
-                "type": "registration_success",
-                "message": "Device registered"
-            }))
-            print("Registration success message sent")
+            # For testing purposes - create a test user if none exists
+            user, created = User.objects.get_or_create(
+                email=email,
+                defaults={
+                    'user_name': email.split('@')[0],
+                    'password': password  # In production, use proper password hashing
+                }
+            )
+            # In production, use: return user if check_password(password, user.password) else None
+            return user if user.password == password else None
         except Exception as e:
-            print(f"Error during device registration: {str(e)}")
-            await self.send(json.dumps({
-                "type": "error",
-                "message": "Registration failed"
-            }))
+            print(f"Error verifying credentials: {e}")
+            return None
 
-    async def login(self, data):
-        print("\n=== Login Attempt ===")
-        device_id = data.get("device_id")
-        print(f"Device ID attempting login: {device_id}")
-
+    @database_sync_to_async
+    def register_device(self, user_name, device_name):
+        """Register a device for a user."""
+        User = apps.get_model('core', 'User')
+        Device = apps.get_model('core', 'Device')
         try:
-            device_info = cache.get(f"device_{device_id}")
-            print(f"Device info from cache: {device_info}")
+            # First get the user by their username
+            try:
+                user = User.objects.get(user_name=user_name)
+            except User.DoesNotExist:
+                print(f"No user found with username: {user_name}")
+                return None
 
-            if device_info:
-                await self.send(json.dumps({
-                    "type": "login_success",
-                    "user_name": device_info["user_name"],
-                    "instance_id": device_info["instance_id"]
-                }))
-                print("Login success message sent")
+            # Then create or get the device for this user
+            device, created = Device.objects.get_or_create(
+                user=user,
+                name=device_name,
+                defaults={
+                    'user': user  # This is needed for creation
+                }
+            )
+            
+            print(f"Device {'created' if created else 'retrieved'} for user {user_name}")
+            return device
+
+        except Exception as e:
+            print(f"Error registering device: {str(e)}")
+            return None
+
+    async def handle_authentication(self, data):
+        """Handle authentication request."""
+        print("\n=== Authentication Attempt ===")
+        user_name = data.get("user_name")
+        email = data.get("email")
+        password = data.get("password")
+        device_name = data.get("device_name")
+
+        print(f"Attempting authentication for email: {email}")
+        
+        try:
+            user = await self.verify_user_credentials(email, password)
+            if user:
+                print(f"User verified, registering device: {device_name}")
+                device = await self.register_device(user.user_name, device_name)
+                if device:
+                    self.authenticated = True
+                    self.user_name = user_name
+                    
+                    await self.send(json.dumps({
+                        "type": "auth_success",
+                        "message": "Authentication successful"
+                    }))
+                    print(f"Authentication successful for user: {user_name}")
+                else:
+                    print("Device registration failed")
+                    await self.send(json.dumps({
+                        "type": "error",
+                        "message": "Device registration failed"
+                    }))
             else:
-                print(f"No device found with ID: {device_id}")
+                print("Invalid credentials")
                 await self.send(json.dumps({
                     "type": "error",
-                    "message": "Device not registered"
+                    "message": "Invalid credentials"
                 }))
         except Exception as e:
-            print(f"Error during login: {str(e)}")
+            print(f"Authentication error: {str(e)}")
             await self.send(json.dumps({
                 "type": "error",
-                "message": "Login failed"
+                "message": f"Authentication error: {str(e)}"
             }))
 
-    async def get_registered_devices(self):
-        print("\n=== Retrieving Registered Devices ===")
-        try:
-            # Get the set of registered devices from cache
-            devices = list(cache.get('registered_devices', set()))
-            print(f"Found devices: {devices}")
-            
-            await self.send(json.dumps({
-                "type": "device_list",
-                "devices": devices
-            }))
-            print("Device list sent")
-        except Exception as e:
-            print(f"Error retrieving devices: {str(e)}")
+    async def handle_ping(self):
+        """Handle ping message from client."""
+        self.last_ping = datetime.now()
+        await self.send(json.dumps({"type": "pong"}))
+
+    async def handle_price_subscription(self, data):
+        """Handle price subscription request."""
+        if not self.authenticated:
             await self.send(json.dumps({
                 "type": "error",
-                "message": "Failed to retrieve devices"
+                "message": "Not authenticated"
             }))
+            return
+
+        # Cancel existing price updates task if it exists
+        if self.price_updates_task:
+            self.price_updates_task.cancel()
+
+        # Start new price updates task
+        self.price_updates_task = asyncio.create_task(self.send_price_updates())
+
+    async def send_price_updates(self):
+        """Send periodic price updates to the client."""
+        while True:
+            try:
+                if not self.authenticated:
+                    break
+                    
+                # For testing, send dummy prices
+                await self.send(json.dumps({
+                    "type": "price_update",
+                    "buy_price": 0.15,
+                    "sell_price": 0.10,
+                    "timestamp": datetime.now().isoformat()
+                }))
+                await asyncio.sleep(30)  # Update every 30 seconds
+            except Exception as e:
+                print(f"Error sending price updates: {e}")
+                await asyncio.sleep(5)  # Wait before retrying
