@@ -9,6 +9,14 @@ from django.apps import apps
 from django.contrib.auth.hashers import check_password
 
 class OppEnergyConsumer(AsyncWebsocketConsumer):
+    @property
+    def User(self):
+        return apps.get_model('core', 'User')
+    
+    @property
+    def Device(self):
+        return apps.get_model('core', 'Device')
+
     async def connect(self):
         print("\n=== WebSocket Connection Attempt ===")
         try:
@@ -39,9 +47,11 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
             data = json.loads(text_data)
             message_type = data.get("type")
             print(f"Message type: {message_type}")
-
+            print(f"Message data: {data}")
             if message_type == "ping":
                 await self.handle_ping()
+            elif message_type == "user_registration":
+                await self.handle_user_registration(data)
             elif message_type == "authenticate":
                 await self.handle_authentication(data)
             elif message_type == "subscribe_prices":
@@ -112,6 +122,29 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
         except Exception as e:
             print(f"Error registering device: {str(e)}")
             return None
+    async def handle_user_registration(self, data):
+        print("\n=== User Registration Attempt ===")
+        user_name = data.get("user_name")
+        email = data.get("email")
+        password = data.get("password")
+        device_name = data.get("device_name")
+        
+        print(f"User Name: {user_name}")
+        print(f"Email: {email}")
+        print(f"Device Name: {device_name}")
+
+        try:
+            # In practice, add proper user registration logic here
+            await self.send(json.dumps({
+                "type": "registration_success",
+                "message": "User and device registered successfully"
+            }))
+        except Exception as e:
+            print(f"Error during registration: {str(e)}")
+            await self.send(json.dumps({
+                "type": "error",
+                "message": "Registration failed"
+            }))
 
     async def handle_authentication(self, data):
         """Handle authentication request."""
@@ -183,15 +216,24 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
             try:
                 if not self.authenticated:
                     break
-                    
-                # For testing, send dummy prices
+                # In practice, fetch real prices from database/service
+                prices = await self.get_current_prices()
+                print(f"Sending price update: {prices}")
                 await self.send(json.dumps({
                     "type": "price_update",
-                    "buy_price": 0.15,
-                    "sell_price": 0.10,
+                    "buy_price": prices["buy_price"],
+                    "sell_price": prices["sell_price"],
                     "timestamp": datetime.now().isoformat()
                 }))
                 await asyncio.sleep(30)  # Update every 30 seconds
             except Exception as e:
                 print(f"Error sending price updates: {e}")
                 await asyncio.sleep(5)  # Wait before retrying
+
+    @database_sync_to_async
+    def get_current_prices(self):
+        # In practice, implement price fetching logic here
+        return {
+            "buy_price": 0.03,  # Example price
+            "sell_price": 0.28  # Example price
+        }
