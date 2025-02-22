@@ -218,17 +218,18 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
                     break
                 # In practice, fetch real prices from database/service
                 prices = await self.get_current_prices()
-                print(f"Sending price update: {prices}")
                 await self.send(json.dumps({
                     "type": "price_update",
-                    "buy_price": prices["buy_price"],
-                    "sell_price": prices["sell_price"],
-                    "timestamp": datetime.now().isoformat()
+                    "data": {  # Wrap price data in a "data" field
+                        "buy_price": prices["buy_price"],
+                        "sell_price": prices["sell_price"],
+                        "timestamp": datetime.now().isoformat()
+                    }
                 }))
                 await asyncio.sleep(30)  # Update every 30 seconds
             except Exception as e:
                 print(f"Error sending price updates: {e}")
-                await asyncio.sleep(5)  # Wait before retrying
+                await asyncio.sleep(5)
 
     @database_sync_to_async
     def get_current_prices(self):
