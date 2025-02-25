@@ -42,6 +42,50 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
             print(f"Error during connection: {str(e)}")
             raise
 
+    async def disconnect(self, close_code):
+        print("\n=== WebSocket Disconnection ===")
+        print(f"Close code: {close_code}")
+        if self.price_updates_task:
+            self.price_updates_task.cancel()
+        if hasattr(self, 'user_name'):
+            print(f"User disconnected: {self.user_name}")
+
+    async def receive(self, text_data):
+        print("\n=== Received WebSocket Message ===")
+        print(f"Raw message: {text_data}")
+        
+        try:
+            data = json.loads(text_data)
+            message_type = data.get("type")
+            print(f"Message type: {message_type}")
+            print(f"Message data: {data}")
+            if message_type == "ping":
+                await self.handle_ping()
+            elif message_type == "user_registration":
+                await self.handle_user_registration(data)
+            elif message_type == "authenticate":
+                await self.handle_authentication(data)
+            elif message_type == "subscribe_prices":
+                await self.handle_price_subscription(data)
+            else:
+                print(f"Unknown message type: {message_type}")
+                await self.send(json.dumps({
+                    "type": "error",
+                    "message": f"Unknown message type: {message_type}"
+                }))
+        except json.JSONDecodeError as e:
+            print(f"JSON decode error: {str(e)}")
+            await self.send(json.dumps({
+                "type": "error",
+                "message": "Invalid JSON format"
+            }))
+        except Exception as e:
+            print(f"Error processing message: {str(e)}")
+            await self.send(json.dumps({
+                "type": "error",
+                "message": f"Internal server error: {str(e)}"
+            }))
+
     @database_sync_to_async
     def verify_user_credentials(self, email, password):
         """Verify user credentials against the database."""
@@ -56,7 +100,7 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
         except Exception as e:
             print(f"Error verifying credentials: {e}")
             return None
-    
+
     @database_sync_to_async
     def register_device(self, username, device_name):
         """Register a device for a user."""
@@ -158,3 +202,52 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
                 "type": "error",
                 "message": f"Authentication error: {str(e)}"
             }))
+
+    async def handle_ping(self):
+        """Handle ping message from client."""
+        self.last_ping = datetime.now()
+        await self.send(json.dumps({"type": "pong"}))
+
+    async def handle_price_subscription(self, data):
+        """Handle price subscription request."""
+        if not self.authenticated:
+            await self.send(json.dumps({
+                "type": "error",
+                "message": "Not authenticated"
+            }))
+            return
+
+        # Cancel existing price updates task if it exists
+        if self.price_updates_task:
+            self.price_updates_task.cancel()
+
+        # Start new price updates task
+        self.price_updates_task = asyncio.create_task(self.send_price_updates())
+
+    async def send_price_updates(self):
+        """Send periodic price updates to the client."""
+        while True:
+            try:
+                if not self.authenticated:
+                    break
+                # In practice, fetch real prices from database/service
+                prices = await self.get_current_prices()
+                print(f"Sending price update: {prices}")
+                await self.send(json.dumps({
+                    "type": "price_update",
+                    "buy_price": prices["buy_price"],
+                    "sell_price": prices["sell_price"],
+                    "timestamp": datetime.now().isoformat()
+                }))
+                await asyncio.sleep(30)  # Update every 30 seconds
+            except Exception as e:
+                print(f"Error sending price updates: {e}")
+                await asyncio.sleep(5)  # Wait before retrying
+
+    @database_sync_to_async
+    def get_current_prices(self):
+        # In practice, implement price fetching logic here
+        return {
+            "buy_price": 0.03,  # Example price
+            "sell_price": 0.28  # Example price
+        }
