@@ -36,7 +36,7 @@ class EnergyPrice(models.Model):
     def __str__(self) -> str:
         return f"Buy: {self.buy_price}, Sell: {self.sell_price}"
     
-class Device(models.Model):
+class Site(models.Model):
     """Class representing a Home Assistant Energy Management Site"""
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,

@@ -11,21 +11,40 @@ User = get_user_model()  # This will get your CustomUser model
 """ OPP Energey Consumer """
 class OppEnergyConsumer(AsyncWebsocketConsumer):
     @property
-    def Device(self):
-        return apps.get_model('core', 'Device')
+    def Site(self):
+        return apps.get_model('core', 'Site')
 
     @database_sync_to_async
-    def create_user(self, email, password, username):
-        """Create a user."""
+    def create_or_update_user(self, email, password, username):
+        """Create a user if they don't exist, or update them if they do."""
         try:
-            user = User.objects.create_user(
-                username=username,
-                email=email,
-                password=password  # create_user handles password hashing
+            # Split the display name into first_name and last_name if provided
+            first_name = ""
+            last_name = ""
+            if username and " " in username:
+                name_parts = username.split(" ", 1)
+                first_name = name_parts[0]
+                last_name = name_parts[1]
+            elif username:
+                first_name = username
+                
+            # Use email as username as per requirements
+            user, created = User.objects.update_or_create(
+                username=email,  # Use email as username
+                defaults={
+                    'email': email,
+                    'first_name': first_name,
+                    'last_name': last_name
+                }
             )
+            
+            if password:
+                user.set_password(password)
+                user.save()
+                
             return user
         except Exception as e:
-            print(f"Error creating user: {e}")
+            print(f"Error creating or updating user: {e}")
             return None
         
     async def connect(self):
@@ -67,6 +86,8 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
                 await self.handle_authentication(data)
             elif message_type == "subscribe_prices":
                 await self.handle_price_subscription(data)
+            elif message_type == "get_prices": 
+                await self.handle_get_prices(data)
             else:
                 print(f"Unknown message type: {message_type}")
                 await self.send(json.dumps({
@@ -102,55 +123,55 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
             return None
 
     @database_sync_to_async
-    def register_device(self, username, device_name):
-        """Register a device for a user."""
+    def register_site(self, username, site_name):
+        """Register a site for a user."""
         try:
             user = User.objects.get(username=username)
-            device, created = self.Device.objects.get_or_create(
+            site, created = self.Site.objects.get_or_create(
                 user=user,
-                name=device_name,
+                name=site_name,
                 defaults={
                     'user': user
                 }
             )
-            print(f"Device {'created' if created else 'retrieved'} for user {username}")
-            return device
+            print(f"Site {'created' if created else 'retrieved'} for user {username}")
+            return site
         except Exception as e:
-            print(f"Error registering device: {str(e)}")
+            print(f"Error registering site: {str(e)}")
             return None
 
     async def handle_user_registration(self, data):
         print("\n=== User Registration Attempt ===")
-        username = data.get("user_name")
+        display_name = data.get("user_name")  # We'll split this into first_name and last_name
         email = data.get("email")
         password = data.get("password")
-        device_name = data.get("device_name")
+        site_name = data.get("site_name")
         
-        print(f"Username: {username}")
+        print(f"Display Name: {display_name}")
         print(f"Email: {email}")
-        print(f"Device Name: {device_name}")
+        print(f"Site Name: {site_name}")
 
         try:
-            # Create the user
-            user = await self.create_user(
+            # Create or update the user
+            user = await self.create_or_update_user(
                 email=email,
                 password=password,
-                username=username
+                username=display_name  # Pass display name to be split into first_name/last_name
             )
             
             if not user:
                 raise Exception("Failed to create user")
 
-            # Register the device
-            device = await self.register_device(username, device_name)
-            if not device:
-                # Rollback user creation if device registration fails
+            # Register the site
+            site = await self.register_site(email, site_name)  # Use email as username for site registration
+            if not site:
+                # Rollback user creation if site registration fails
                 await database_sync_to_async(user.delete)()
-                raise Exception("Failed to register device")
+                raise Exception("Failed to register site")
 
             await self.send(json.dumps({
                 "type": "registration_success",
-                "message": "User and device registered successfully"
+                "message": "User and site registered successfully"
             }))
             
         except Exception as e:
@@ -166,16 +187,16 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
         username = data.get("user_name")
         email = data.get("email")
         password = data.get("password")
-        device_name = data.get("device_name")
+        site_name = data.get("site_name")
 
         print(f"Attempting authentication for email: {email}")
         
         try:
             user = await self.verify_user_credentials(email, password)
             if user:
-                print(f"User verified, registering device: {device_name}")
-                device = await self.register_device(user.username, device_name)
-                if device:
+                print(f"User verified, registering site: {site_name}")
+                site = await self.register_site(user.username, site_name)
+                if site:
                     self.authenticated = True
                     self.user_name = username
                     
@@ -185,10 +206,10 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
                     }))
                     print(f"Authentication successful for user: {username}")
                 else:
-                    print("Device registration failed")
+                    print("Site registration failed")
                     await self.send(json.dumps({
                         "type": "error",
-                        "message": "Device registration failed"
+                        "message": "Site registration failed"
                     }))
             else:
                 print("Invalid credentials")
@@ -224,21 +245,63 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
         # Start new price updates task
         self.price_updates_task = asyncio.create_task(self.send_price_updates())
 
+    async def handle_get_prices(self, data):
+        """Handle request for current prices."""
+        print("\n=== Price Request ===")
+        username = data.get("user_name")
+        
+        print(f"Price request for user: {username}")
+        
+        if not self.authenticated:
+            print("User not authenticated for price request")
+            await self.send(json.dumps({
+                "type": "error",
+                "message": "Not authenticated"
+            }))
+            return
+            
+        try:
+            # Get current prices
+            prices = await self.get_current_prices()
+            
+            # Send immediate price update
+            print(f"Sending price data: {prices}")
+            await self.send(json.dumps({
+                "type": "price_update",
+                "data": {  # Wrap in a data field to match what coordinator expects
+                    "buy_price": prices["buy_price"],
+                    "sell_price": prices["sell_price"],
+                    "timestamp": datetime.now().isoformat()
+                }
+            }))
+        except Exception as e:
+            print(f"Error handling price request: {str(e)}")
+            await self.send(json.dumps({
+                "type": "error",
+                "message": f"Error getting prices: {str(e)}"
+            }))
+
     async def send_price_updates(self):
         """Send periodic price updates to the client."""
         while True:
             try:
                 if not self.authenticated:
                     break
+                    
                 # In practice, fetch real prices from database/service
                 prices = await self.get_current_prices()
                 print(f"Sending price update: {prices}")
+                
+                # Use the same format as the get_prices handler
                 await self.send(json.dumps({
                     "type": "price_update",
-                    "buy_price": prices["buy_price"],
-                    "sell_price": prices["sell_price"],
-                    "timestamp": datetime.now().isoformat()
+                    "data": {  # Wrap in a data field
+                        "buy_price": prices["buy_price"],
+                        "sell_price": prices["sell_price"],
+                        "timestamp": datetime.now().isoformat()
+                    }
                 }))
+                
                 await asyncio.sleep(30)  # Update every 30 seconds
             except Exception as e:
                 print(f"Error sending price updates: {e}")

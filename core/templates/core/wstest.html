@@ -57,22 +57,22 @@
 
     <!-- Rest of the control panels remain the same -->
     <div class="control-panel">
-        <h3>Device Registration</h3>
+        <h3>Site Registration</h3>
         <input type="text" id="userName" placeholder="User Name">
-        <input type="text" id="deviceId" placeholder="Device ID">
+        <input type="text" id="SiteId" placeholder="Site ID">
         <input type="text" id="instanceId" placeholder="Instance ID">
-        <button onclick="registerDevice()" id="registerBtn" disabled>Register Device</button>
+        <button onclick="registerSite()" id="registerBtn" disabled>Register Site</button>
     </div>
 
     <div class="control-panel">
-        <h3>Device Login</h3>
-        <input type="text" id="loginDeviceId" placeholder="Device ID">
+        <h3>Site Login</h3>
+        <input type="text" id="loginSiteId" placeholder="Site ID">
         <button onclick="login()" id="loginBtn" disabled>Login</button>
     </div>
 
     <div class="control-panel">
-        <h3>Device List</h3>
-        <button onclick="getRegisteredDevices()" id="listDevicesBtn" disabled>Get Registered Devices</button>
+        <h3>Site List</h3>
+        <button onclick="getRegisteredSites()" id="listSitesBtn" disabled>Get Registered Sites</button>
     </div>
 
     <div id="log"></div>
@@ -179,7 +179,7 @@
             disconnectBtn.disabled = !connected;
             registerBtn.disabled = !connected;
             loginBtn.disabled = !connected;
-            listDevicesBtn.disabled = !connected;
+            listSitesBtn.disabled = !connected;
             document.getElementById('connInstanceId').disabled = connected;
             status.textContent = connected ? 'Connected' : 'Not Connected';
             status.style.color = connected ? 'green' : 'red';
@@ -267,8 +267,8 @@
                             case 'login_success':
                                 message = `Login successful - User: ${data.user_name}, Instance: ${data.instance_id}`;
                                 break;
-                            case 'device_list':
-                                message = `Registered devices: ${data.devices.join(', ')}`;
+                            case 'Site_list':
+                                message = `Registered sites: ${data.sites.join(', ')}`;
                                 break;
                             case 'error':
                                 message = `Error: ${data.message}`;
@@ -351,57 +351,57 @@
             updateDebugInfo();
         }
 
-        function registerDevice() {
+        function registerSite() {
             if (!ws) return;
             
             const userName = document.getElementById('userName').value.trim();
-            const deviceId = document.getElementById('deviceId').value.trim();
+            const siteId = document.getElementById('siteId').value.trim();
             const instanceId = document.getElementById('instanceId').value.trim();
             
-            if (!userName || !deviceId || !instanceId) {
+            if (!userName || !siteId || !instanceId) {
                 addLog('Please fill in all registration fields', 'error');
                 return;
             }
             
             const message = {
-                type: 'register_device',
+                type: 'register_site',
                 user_name: userName,
-                device_id: deviceId,
+                site_id: siteId,
                 instance_id: instanceId
             };
             
             ws.send(JSON.stringify(message));
-            addLog(`Registering device: ${deviceId}`, 'info');
+            addLog(`Registering site: ${siteId}`, 'info');
         }
 
         function login() {
             if (!ws) return;
             
-            const deviceId = document.getElementById('loginDeviceId').value.trim();
+            const siteId = document.getElementById('loginSiteId').value.trim();
             
-            if (!deviceId) {
-                addLog('Please enter a device ID', 'error');
+            if (!siteId) {
+                addLog('Please enter a site ID', 'error');
                 return;
             }
             
             const message = {
                 type: 'login',
-                device_id: deviceId
+                site_id: siteId
             };
             
             ws.send(JSON.stringify(message));
-            addLog(`Attempting login for device: ${deviceId}`, 'info');
+            addLog(`Attempting login for site: ${siteId}`, 'info');
         }
 
-        function getRegisteredDevices() {
+        function getRegisteredSites() {
             if (!ws) return;
             
             const message = {
-                type: 'get_registered_devices'
+                type: 'get_registered_sites'
             };
             
             ws.send(JSON.stringify(message));
-            addLog('Requesting registered devices list', 'info');
+            addLog('Requesting registered sites list', 'info');
         }
 
         function updateStatus(connected, message = '') {
