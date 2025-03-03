@@ -1,0 +1,31 @@
+<!-- ha_remote/templates/ha_remote/frontend.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ site.name }} - Home Assistant</title>
+    
+    <!-- Home Assistant frontend resources from CDN -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/home-assistant/frontend@latest/hass_frontend/frontend.css">
+    <script type="module" src="https://cdn.jsdelivr.net/gh/home-assistant/frontend@latest/hass_frontend/frontend.js"></script>
+    
+    <!-- Your custom connection script -->
+    <script src="{% static 'ha_remote/js/ha-connection.js' %}"></script>
+</head>
+<body>
+    <!-- Home Assistant will render here -->
+    <home-assistant></home-assistant>
+    
+    <script>
+        // Initialize connection to your WebSocket
+        document.addEventListener('DOMContentLoaded', () => {
+            // Pass your WebSocket URL and site info
+            initHaConnection('{{ ws_url }}', {
+                site_id: '{{ site.id }}',
+                site_name: '{{ site.name }}'
+            });
+        });
+    </script>
+</body>
+</html>
