@@ -100,6 +100,8 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
                 await self.handle_price_subscription(data)
             elif message_type == "get_prices": 
                 await self.handle_get_prices(data)
+            elif message_type == "get_hass_state":
+                await self.handle_get_hass_state(data)
             else:
                 print(f"Unknown message type: {message_type}")
                 await self.send(json.dumps({
@@ -306,6 +308,45 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
             await self.send(json.dumps({
                 "type": "error",
                 "message": f"Error getting prices: {str(e)}"
+            }))
+
+    async def handle_get_hass_state(self, data):
+        """Handle request for Home Assistant state."""
+        print("\n=== Home Assistant State Request ===")
+        username = data.get("user_name")
+        instance_id = data.get("instance_id")
+        entity_id = data.get("entity_id")  # Optional - specify a particular entity
+        
+        print(f"HA state request for user: {username}, instance: {instance_id}")
+        
+        if not self.authenticated:
+            print("User not authenticated for HA state request")
+            await self.send(json.dumps({
+                "type": "error",
+                "message": "Not authenticated"
+            }))
+            return
+            
+        try:
+            # Create a unique message ID for this request
+            message_id = data.get("id", str(datetime.now().timestamp()))
+            
+            # Send request to get HA state
+            await self.send(json.dumps({
+                "type": "get_hass_state_request",
+                "instance_id": instance_id,
+                "entity_id": entity_id,
+                "id": message_id
+            }))
+            
+            print(f"Sent Home Assistant state request to instance {instance_id}")
+            
+        except Exception as e:
+            print(f"Error handling HA state request: {str(e)}")
+            await self.send(json.dumps({
+                "type": "error",
+                "message": f"Error requesting Home Assistant state: {str(e)}",
+                "id": data.get("id")
             }))
 
     async def send_price_updates(self):
