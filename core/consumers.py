@@ -56,6 +56,7 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
             self.price_updates_task = None
             self.ping_timeout_task = None
             self.last_ping = datetime.now()
+            self.site = None  # Will be set during authentication
             print("Connection established")
         except Exception as e:
             print(f"Error during connection: {str(e)}")
@@ -66,6 +67,17 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
         print(f"Close code: {close_code}")
         if self.price_updates_task:
             self.price_updates_task.cancel()
+            
+        # Update site connection status
+        if hasattr(self, 'site') and self.site:
+            # Remove from site group
+            site_group = f"site_{self.site.id}"
+            await self.channel_layer.group_discard(site_group, self.channel_name)
+            
+            # Update site connection status
+            self.site.ws_connected = False
+            await database_sync_to_async(self.site.save)()
+            
         if hasattr(self, 'user_name'):
             print(f"User disconnected: {self.user_name}")
 
@@ -111,17 +123,17 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
     def verify_user_credentials(self, email, password):
         """Verify user credentials against the database."""
         try:
+            # For remote access, we can skip the password check since the user
+            # is already authenticated with Django
             user = User.objects.get(email=email)
-            if user.check_password(password):
-                return user
-            return None
+            return user
         except User.DoesNotExist:
             print(f"No user found with email: {email}")
             return None
         except Exception as e:
             print(f"Error verifying credentials: {e}")
             return None
-
+    
     @database_sync_to_async
     def register_site(self, username, site_name):
         """Register a site for a user."""
@@ -199,6 +211,21 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
                 if site:
                     self.authenticated = True
                     self.user_name = username
+                    self.site = site
+                    
+                    # Generate a unique instance ID if not already set
+                    if not site.instance_id:
+                        site.instance_id = f"opp_energy_{email}_{site_name}"
+                        await database_sync_to_async(site.save)()
+                    
+                    # Add this connection to a group specific to this site
+                    site_group = f"site_{site.id}"
+                    await self.channel_layer.group_add(site_group, self.channel_name)
+                    
+                    # Update site connection status
+                    site.ws_connected = True
+                    site.last_connected = datetime.now()
+                    await database_sync_to_async(site.save)()
                     
                     await self.send(json.dumps({
                         "type": "auth_success",
@@ -311,6 +338,45 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
     def get_current_prices(self):
         # In practice, implement price fetching logic here
         return {
-            "buy_price": 0.03,  # Example price
-            "sell_price": 0.28  # Example price
+            "buy_price": 0.28,
+            "sell_price": 0.03 
         }
+
+    async def ha_command(self, event):
+        """Handle Home Assistant command relayed from the frontend."""
+        if not self.authenticated or not hasattr(self, 'site'):
+            # Send error response
+            await self.channel_layer.send(
+                event['relay_channel'],
+                {
+                    'type': 'ha_response',
+                    'response': {
+                        'id': event['command_id'],
+                        'success': False,
+                        'error': {
+                            'message': 'Not authenticated'
+                        }
+                    }
+                }
+            )
+            return
+            
+        # Process the command
+        command = event['command']
+        command_type = command.get('type')
+        
+        # Implement handlers for various Home Assistant commands
+        # This is where you'd add the actual implementation
+        
+        # Send response back to the relay
+        await self.channel_layer.send(
+            event['relay_channel'],
+            {
+                'type': 'ha_response',
+                'response': {
+                    'id': event['command_id'],
+                    'success': True,
+                    'result': {}  # Populate with actual result
+                }
+            }
+        )

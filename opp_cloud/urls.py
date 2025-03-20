@@ -1,5 +1,5 @@
-
 """
+opp_cloud/urls.py
 URL configuration for opp_cloud project.
 
 The `urlpatterns` list routes URLs to views. For more information please see:
@@ -16,20 +16,16 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
+from django.contrib.auth import views as auth_views
 from django.urls import path, include
 from django.shortcuts import redirect
 from django.views.generic import TemplateView
-from rest_framework_simplejwt.views import (
-    TokenObtainPairView,
-    TokenRefreshView,
-    TokenVerifyView,
-)
 
 # Handle the root URL - redirect to admin or remote access dashboard
 def home_redirect(request):
     if request.user.is_authenticated:
         # If user is authenticated, redirect to remote dashboard
-        return redirect('remote_dashboard')
+        return redirect('ha_dashboard')  # Change this to use your view function
     # Otherwise redirect to login
     return redirect('login')
 
@@ -44,14 +40,8 @@ urlpatterns = [
     # Remote access app
     path('remote/', include('ha_remote.urls')),
     
-    # Authentication endpoints
-    path('auth/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
-    path('auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
-    path('auth/token/verify/', TokenVerifyView.as_view(), name='token_verify'),
-    
     # Login page for remote access
-    path('login/', TemplateView.as_view(template_name='ha_remote/login.html'), name='login'),
-    
-    # Remote dashboard
-    path('dashboard/', TemplateView.as_view(template_name='ha_remote/dashboard.html'), name='remote_dashboard'),
+    path('login/', auth_views.LoginView.as_view(template_name='ha_remote/login.html'), name='login'),
+    path('logout/', auth_views.LogoutView.as_view(next_page='login'), name='logout'),
+
 ]

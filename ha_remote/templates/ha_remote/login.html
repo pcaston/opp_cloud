@@ -45,69 +45,34 @@
 </head>
 <body class="text-center">
     <main class="form-signin">
-        <form id="login-form">
+        <form method="post" action="{% url 'login' %}">
+            {% csrf_token %}
             <img class="logo mb-4" src="/static/logo.png" alt="OPP Cloud Logo">
             <h1 class="h3 mb-3 fw-normal">Remote Access Login</h1>
             
             <div class="form-floating">
-                <input type="text" class="form-control" id="username" placeholder="Username">
+                <input type="text" class="form-control" id="username" name="username" placeholder="Username" required>
                 <label for="username">Username</label>
             </div>
             <div class="form-floating">
-                <input type="password" class="form-control" id="password" placeholder="Password">
+                <input type="password" class="form-control" id="password" name="password" placeholder="Password" required>
                 <label for="password">Password</label>
             </div>
             
-            <div class="alert alert-danger d-none" id="error-message" role="alert"></div>
+            {% if form.errors %}
+            <div class="alert alert-danger" role="alert">
+                Invalid username or password
+            </div>
+            {% endif %}
             
             <button class="w-100 btn btn-lg btn-primary" type="submit">Sign in</button>
             <p class="mt-5 mb-3 text-muted">&copy; OPP Energy</p>
+            
+            <!-- If there's a next parameter, include it -->
+            {% if next %}
+            <input type="hidden" name="next" value="{{ next }}">
+            {% endif %}
         </form>
     </main>
-    
-    <script>
-        document.getElementById('login-form').addEventListener('submit', async function(e) {
-            e.preventDefault();
-            
-            const username = document.getElementById('username').value;
-            const password = document.getElementById('password').value;
-            const errorMessage = document.getElementById('error-message');
-            
-            // Clear any previous errors
-            errorMessage.classList.add('d-none');
-            
-            try {
-                // Call the token endpoint
-                const response = await fetch('/auth/token/', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        username,
-                        password
-                    }),
-                });
-                
-                if (!response.ok) {
-                    throw new Error('Invalid username or password');
-                }
-                
-                const data = await response.json();
-                
-                // Store the tokens in localStorage
-                localStorage.setItem('access_token', data.access);
-                localStorage.setItem('refresh_token', data.refresh);
-                
-                // Redirect to dashboard
-                window.location.href = '/dashboard/';
-                
-            } catch (error) {
-                // Show error message
-                errorMessage.textContent = error.message;
-                errorMessage.classList.remove('d-none');
-            }
-        });
-    </script>
 </body>
 </html>

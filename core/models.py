@@ -10,22 +10,7 @@ class CustomUser(AbstractUser):
 
     def __str__(self) -> str:
         return str(self.username)
-
-class HomeAssistantInstance(models.Model):
-    """Class representing a Home Assistant Instance"""
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE
-    )
-    instance_id = models.CharField(max_length=100, unique=True)
-    name = models.CharField(max_length=200)
-    api_token = models.CharField(max_length=200)
-    created_at = models.DateTimeField(auto_now_add=True)
-    last_connected = models.DateTimeField(auto_now=True)
-
-    def __str__(self) -> str:
-        return f"{self.name} ({self.instance_id})"
-      
+     
 class EnergyPrice(models.Model):
     """Class representing Energy Prices"""
     buy_price = models.DecimalField(max_digits=10, decimal_places=4)
@@ -44,6 +29,30 @@ class Site(models.Model):
     )
     name = models.CharField(max_length=100)
     created_at = models.DateTimeField(auto_now_add=True)
+    # WebSocket connection
+    instance_id = models.CharField(max_length=100, unique=True, null=True, blank=True)
+    ws_connected = models.BooleanField(default=False)
+    last_connected = models.DateTimeField(null=True, blank=True)
+    
+    # Reference to the registered websocket connection in memory
+    # This is a transient property, not stored in the database
+    @property
+    def websocket_connection(self):
+        """Get the active websocket connection for this site."""
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        
+        # Generate the expected group name based on how you're storing connections
+        # This might need adjustment based on your actual implementation
+        group_name = f"site_{self.id}"
+        
+        # Check if there's an active connection
+        channel_layer = get_channel_layer()
+        if channel_layer:
+            # This is a placeholder - you'll need to implement how to check
+            # for an active connection in your channel layer
+            return group_name
+        return None
     
     def __str__(self) -> str:
         return f"{self.name} ({self.user})"

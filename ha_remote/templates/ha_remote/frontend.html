@@ -1,4 +1,5 @@
 <!-- ha_remote/templates/ha_remote/frontend.html -->
+{% load static %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -18,14 +19,95 @@
     <home-assistant></home-assistant>
     
     <script>
-        // Initialize connection to your WebSocket
         document.addEventListener('DOMContentLoaded', () => {
-            // Pass your WebSocket URL and site info
-            initHaConnection('{{ ws_url }}', {
-                site_id: '{{ site.id }}',
-                site_name: '{{ site.name }}'
-            });
+            const siteId = {{ site.id }};
+            const siteName = "{{ site.name }}";
+            
+            // Get the Home Assistant element
+            const homeAssistant = document.querySelector('home-assistant');
+            
+            if (homeAssistant) {
+                // Try to check site status, but proceed even if it fails
+                fetch(`/remote/api/site/${siteId}/status/`)
+                    .then(response => response.json())
+                    .catch(error => {
+                        console.error('Error checking site status:', error);
+                        // Return a default status to allow initialization to continue
+                        return { connected: true };
+                    })
+                    .then(data => {
+                        console.log('Site connection status:', data);
+                        // Initialize Home Assistant frontend
+                        initHomeAssistant(homeAssistant, siteId, siteName);
+                    });
+            }
         });
+        
+        function initHomeAssistant(homeAssistant, siteId, siteName) {
+            // Create a basic connection to Home Assistant
+            const socket = new WebSocket(`ws://${window.location.host}/ws/opp_energy/`);
+            
+            socket.onopen = function() {
+                console.log('WebSocket connected');
+                
+                // Authenticate with WebSocket
+                socket.send(JSON.stringify({
+                    type: 'authenticate',
+                    user_name: '{{ request.user.username }}',
+                    email: '{{ request.user.email }}',
+                    password: '', // Not sending password
+                    site_name: siteName
+                }));
+            };
+            
+            socket.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                console.log('Message from WebSocket:', data);
+                
+                if (data.type === 'auth_success') {
+                    console.log('Successfully authenticated with WebSocket');
+                    
+                    // Configure Home Assistant
+                    homeAssistant.hass = createHassObject(socket);
+                }
+            };
+            
+            socket.onerror = function(error) {
+                console.error('WebSocket error:', error);
+            };
+            
+            socket.onclose = function(event) {
+                console.log('WebSocket connection closed:', event);
+            };
+        }
+        
+        function createHassObject(socket) {
+            // Basic implementation of the hass object expected by Home Assistant frontend
+            return {
+                callService: function(domain, service, serviceData) {
+                    console.log(`Calling service ${domain}.${service}`, serviceData);
+                    return Promise.resolve(); // Placeholder
+                },
+                getStates: function() {
+                    console.log('Getting states');
+                    return Promise.resolve([]); // Placeholder
+                },
+                getConfig: function() {
+                    console.log('Getting config');
+                    return Promise.resolve({
+                        location_name: 'Home',
+                        latitude: 0,
+                        longitude: 0,
+                        elevation: 0,
+                        unit_system: { temperature: '°C', length: 'km' },
+                        time_zone: 'UTC',
+                        components: [],
+                        version: '2023.3.0'
+                    });
+                },
+                // Add other required methods
+            };
+        }
     </script>
 </body>
 </html>

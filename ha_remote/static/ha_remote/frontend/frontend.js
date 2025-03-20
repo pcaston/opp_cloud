@@ -1,0 +1,1 @@
+Couldn't find the requested file /hass_frontend/frontend.js in home-assistant/frontend.

@@ -95,8 +95,6 @@ INSTALLED_APPS = [
     'channels',
     'core',
     'ha_remote',
-    'rest_framework',
-    'rest_framework_simplejwt',
 ]
 
 MIDDLEWARE = [
@@ -107,7 +105,36 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "csp.middleware.CSPMiddleware",
 ]
+
+# Add CSP configuration
+CSP_DEFAULT_SRC = ("'self'",)
+CSP_SCRIPT_SRC = (
+    "'self'", 
+    "'unsafe-inline'", 
+    "'unsafe-eval'",
+    "https://cdn.jsdelivr.net",
+)
+CSP_STYLE_SRC = (
+    "'self'", 
+    "'unsafe-inline'",
+    "https://cdn.jsdelivr.net",
+)
+CSP_FONT_SRC = (
+    "'self'",
+    "https://cdn.jsdelivr.net",
+)
+CSP_CONNECT_SRC = (
+    "'self'",
+    "ws:",
+    "wss:",
+)
+CSP_IMG_SRC = (
+    "'self'",
+    "data:",
+    "https://cdn.jsdelivr.net",
+)
 
 ROOT_URLCONF = "opp_cloud.urls"
 
@@ -116,6 +143,7 @@ TEMPLATES = [
         "BACKEND": "django.template.backends.django.DjangoTemplates",
         'DIRS': [
             os.path.join(BASE_DIR, 'core/templates'),
+            os.path.join(BASE_DIR, 'ha_remote/templates'), 
             ],
         "APP_DIRS": True,
         "OPTIONS": {
@@ -195,6 +223,7 @@ AUTH_PASSWORD_VALIDATORS = [
 LOGIN_URL = '/accounts/login/'
 LOGOUT_URL = '/accounts/logout/'
 AUTH_USER_MODEL = 'core.CustomUser'
+LOGIN_REDIRECT_URL = '/remote/'  # Where to go after successful login
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.1/topics/i18n/
