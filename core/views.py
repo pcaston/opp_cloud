@@ -15,7 +15,7 @@ def wstest(request):
 
 @csrf_exempt
 @login_required
-def register_instance(request):
+def register_site(request):
     if request.method == 'POST':
         data = json.loads(request.body)
         
@@ -24,18 +24,18 @@ def register_instance(request):
             user=request.user,
             name=data['name'],
             defaults={
-                'instance_id': data.get('instance_id'),
+                'site_id': data.get('site_id'),
                 'ws_connected': False,
                 'last_connected': None
             }
         )
         
-        # If the site already existed but needs to update instance_id
-        if not created and data.get('instance_id') and site.instance_id != data.get('instance_id'):
-            site.instance_id = data.get('instance_id')
+        # If the site already existed but needs to update site_id
+        if not created and data.get('site_id') and site.site_id != data.get('site_id'):
+            site.site_id = data.get('site_id')
             site.save()
             
-        return JsonResponse({'status': 'success', 'site_id': site.id, 'instance_id': site.instance_id})
+        return JsonResponse({'status': 'success', 'site_id': site.id, 'site_id': site.site_id})
     return JsonResponse({'status': 'error'}, status=405)
 
 @csrf_exempt
@@ -67,7 +67,7 @@ def site_status(request, site_id):
     return JsonResponse({
         'id': site.id,
         'name': site.name,
-        'instance_id': site.instance_id,
+        'site_id': site.site_id,
         'connected': site.ws_connected,
         'last_connected': site.last_connected.isoformat() if site.last_connected else None
     })

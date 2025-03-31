@@ -1,0 +1,319 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ site.name }} Control Panel{% endblock %}
+
+{% block extra_css %}
+{% load static %}
+<link rel="stylesheet" href="{% static 'css/ha-style.css' %}">
+<style>
+  /* Additional inline styles */
+  .ha-interface {
+    display: flex;
+    height: calc(100vh - 100px);
+  }
+  .sidebar {
+    width: 250px;
+    background: #f5f5f5;
+    padding: 1rem;
+    overflow-y: auto;
+    border-right: 1px solid rgba(0, 0, 0, 0.12);
+  }
+  .main-panel {
+    flex: 1;
+    padding: 1rem;
+    overflow-y: auto;
+  }
+  .interface-header {
+    background-color: var(--primary-color);
+    color: white;
+    padding: 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .connection-indicator {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    margin-right: 0.5rem;
+    vertical-align: middle;
+  }
+  .connected { background: #4CAF50; }
+  .disconnected { background: #F44336; }
+  .domain-section {
+    margin-bottom: 1.5rem;
+  }
+  .domain-section h3 {
+    color: var(--primary-color);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+    padding-bottom: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+  .entity-item {
+    padding: 0.5rem;
+    cursor: pointer;
+    border-radius: 4px;
+    margin-bottom: 0.2rem;
+  }
+  .entity-item:hover {
+    background-color: rgba(0, 0, 0, 0.05);
+  }
+  .entity-item.active {
+    background-color: rgba(3, 169, 244, 0.1);
+    font-weight: 500;
+  }
+  .loading {
+    text-align: center;
+    padding: 2rem;
+    color: var(--text-secondary-color);
+  }
+  .placeholder {
+    text-align: center;
+    padding: 4rem 2rem;
+    color: var(--text-secondary-color);
+  }
+  #connection-status {
+    font-size: 0.9rem;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<header class="interface-header">
+  <h1>
+    <span id="connection-indicator" class="connection-indicator disconnected"></span>
+    {{ site.name }}
+  </h1>
+  <div id="connection-status">Connecting...</div>
+</header>
+
+<div class="ha-interface">
+  <div class="sidebar">
+    <h2>Entities</h2>
+    <div class="search-box">
+      <input type="text" id="entity-search" placeholder="Search entities..." class="search-input">
+    </div>
+    <div id="entity-list" class="entity-list">
+      <div class="loading">Loading entities...</div>
+    </div>
+  </div>
+  
+  <div class="main-panel">
+    <div id="entity-details">
+      <div class="placeholder">Select an entity from the sidebar to view details and controls</div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/vendor/haws.umd.js' %}"></script>
+<script src="{% static 'js/vendor/lodash.min.js' %}"></script>
+<script type="module" src="{% static 'js/ha-components.js' %}"></script>
+<script>
+  // Configuration
+  const siteId = "{{ site.id }}";
+  const wsUrl = `ws://${window.location.host}/ws/ha/frontend/${siteId}/`;
+  let socket = null;
+  let messageId = 1;
+  
+  // DOM elements
+  const connectionIndicator = document.getElementById('connection-indicator');
+  const connectionStatus = document.getElementById('connection-status');
+  const entityList = document.getElementById('entity-list');
+  const entityDetails = document.getElementById('entity-details');
+  
+  // Connect to WebSocket and set up handlers
+  function connectWebSocket() {
+    console.log(`Connecting to WebSocket at ${wsUrl}`);
+    socket = new WebSocket(wsUrl);
+    
+    socket.addEventListener('open', () => {
+      console.log("WebSocket connection established");
+      connectionStatus.textContent = "Connected to server";
+      
+      // Request entity states immediately after connection
+      getEntityStates();
+    });
+    
+    socket.addEventListener('message', (event) => {
+      console.log("Received WebSocket message:", event.data);
+      try {
+        const message = JSON.parse(event.data);
+        
+        // Handle auth_ok message
+        if (message.type === "auth_ok") {
+          updateConnectionStatus(message.ha_connected);
+        }
+        
+        // Handle entity states response
+        if (message.type === "result" && message.result) {
+          displayEntities(message.result);
+        }
+      } catch (error) {
+        console.error("Error processing message:", error);
+      }
+    });
+    
+    socket.addEventListener('close', () => {
+      console.log("WebSocket connection closed");
+      connectionStatus.textContent = "Disconnected";
+      connectionIndicator.classList.remove('connected');
+      connectionIndicator.classList.add('disconnected');
+      
+      // Attempt to reconnect after delay
+      setTimeout(connectWebSocket, 3000);
+    });
+    
+    socket.addEventListener('error', (error) => {
+      console.error("WebSocket error:", error);
+      connectionStatus.textContent = "Connection error";
+    });
+  }
+  
+  // Send a message to the WebSocket
+  function sendMessage(message) {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      console.error("WebSocket not connected");
+      return;
+    }
+    
+    message.id = messageId++;
+    console.log("Sending message:", message);
+    socket.send(JSON.stringify(message));
+  }
+  
+  // Request entity states
+  function getEntityStates() {
+    sendMessage({ type: "get_states" });
+  }
+  
+  // Update connection status UI
+  function updateConnectionStatus(connected) {
+    if (connected) {
+      connectionIndicator.classList.remove('disconnected');
+      connectionIndicator.classList.add('connected');
+      connectionStatus.textContent = "Connected to Home Assistant";
+    } else {
+      connectionIndicator.classList.remove('connected');
+      connectionIndicator.classList.add('disconnected');
+      connectionStatus.textContent = "Home Assistant not connected";
+    }
+  }
+  
+  // Display entities in the sidebar
+  function displayEntities(entities) {
+    console.log("Displaying entities:", entities);
+    entityList.innerHTML = '';
+    
+    if (!entities || Object.keys(entities).length === 0) {
+      entityList.innerHTML = '<div class="loading">No entities available</div>';
+      return;
+    }
+    
+    // Group entities by domain
+    const domains = {};
+    Object.entries(entities).forEach(([entityId, entity]) => {
+      const domain = entityId.split('.')[0];
+      if (!domains[domain]) domains[domain] = [];
+      domains[domain].push({entityId, entity});
+    });
+    
+    // Create domain sections
+    Object.entries(domains).forEach(([domain, domainEntities]) => {
+      const section = document.createElement('div');
+      section.className = 'domain-section';
+      
+      const title = document.createElement('h3');
+      title.textContent = domain.charAt(0).toUpperCase() + domain.slice(1);
+      section.appendChild(title);
+      
+      // Create entity items
+      domainEntities.forEach(({entityId, entity}) => {
+        const item = document.createElement('div');
+        item.className = 'entity-item';
+        item.textContent = entity.attributes?.friendly_name || entityId;
+        item.addEventListener('click', () => showEntityDetails(entityId, entity));
+        section.appendChild(item);
+      });
+      
+      entityList.appendChild(section);
+    });
+  }
+  
+  // Display entity details in the main panel
+  function showEntityDetails(entityId, entity) {
+    console.log("Showing details for entity:", entityId, entity);
+    entityDetails.innerHTML = '';
+    
+    const card = document.createElement('div');
+    card.className = 'ha-card';
+    
+    const header = document.createElement('div');
+    header.className = 'card-header';
+    header.textContent = entity.attributes?.friendly_name || entityId;
+    card.appendChild(header);
+    
+    const content = document.createElement('div');
+    content.className = 'card-content';
+    
+    const state = document.createElement('div');
+    state.innerHTML = `<strong>State:</strong> ${entity.state}`;
+    content.appendChild(state);
+    
+    // Add a toggle button for lights and switches
+    const domain = entityId.split('.')[0];
+    if (['light', 'switch', 'input_boolean'].includes(domain)) {
+      const toggleBtn = document.createElement('button');
+      toggleBtn.className = 'toggle-btn';
+      toggleBtn.textContent = entity.state === 'on' ? 'Turn Off' : 'Turn On';
+      toggleBtn.addEventListener('click', () => {
+        const service = entity.state === 'on' ? 'turn_off' : 'turn_on';
+        sendMessage({
+          type: 'call_service',
+          domain: domain,
+          service: service,
+          service_data: { entity_id: entityId }
+        });
+      });
+      content.appendChild(toggleBtn);
+    }
+    
+    card.appendChild(content);
+    entityDetails.appendChild(card);
+  }
+  
+  // Initialize when the page loads
+  document.addEventListener('DOMContentLoaded', () => {
+    console.log("Page loaded, connecting to WebSocket");
+    connectWebSocket();
+    
+    // Add a debug button
+    const debugBtn = document.createElement('button');
+    debugBtn.textContent = 'Load Test Data';
+    debugBtn.style.position = 'fixed';
+    debugBtn.style.bottom = '10px';
+    debugBtn.style.right = '10px';
+    debugBtn.style.zIndex = '1000';
+    debugBtn.style.padding = '8px 16px';
+    debugBtn.addEventListener('click', () => {
+      const testEntities = {
+        "light.living_room": {
+          "entity_id": "light.living_room",
+          "state": "on",
+          "attributes": {"friendly_name": "Living Room Light"}
+        },
+        "switch.kitchen": {
+          "entity_id": "switch.kitchen",
+          "state": "off",
+          "attributes": {"friendly_name": "Kitchen Switch"}
+        }
+      };
+      displayEntities(testEntities);
+      updateConnectionStatus(true);
+    });
+    document.body.appendChild(debugBtn);
+  });
+</script>
+{% endblock %}

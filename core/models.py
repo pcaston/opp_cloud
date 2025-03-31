@@ -30,7 +30,7 @@ class Site(models.Model):
     name = models.CharField(max_length=100)
     created_at = models.DateTimeField(auto_now_add=True)
     # WebSocket connection
-    instance_id = models.CharField(max_length=100, unique=True, null=True, blank=True)
+    site_id = models.CharField(max_length=100, unique=True, null=True, blank=True)
     ws_connected = models.BooleanField(default=False)
     last_connected = models.DateTimeField(null=True, blank=True)
     
@@ -40,19 +40,25 @@ class Site(models.Model):
     def websocket_connection(self):
         """Get the active websocket connection for this site."""
         from channels.layers import get_channel_layer
-        from asgiref.sync import async_to_sync
         
-        # Generate the expected group name based on how you're storing connections
-        # This might need adjustment based on your actual implementation
+        # Generate the expected group name for this site
         group_name = f"site_{self.id}"
         
-        # Check if there's an active connection
+        # Get the channel layer
         channel_layer = get_channel_layer()
-        if channel_layer:
-            # This is a placeholder - you'll need to implement how to check
-            # for an active connection in your channel layer
-            return group_name
-        return None
+        if not channel_layer:
+            return None
+        
+        # For InMemoryChannelLayer, check if there are active channels in the group
+        group_channels = channel_layer.groups.get(group_name, set())
+        
+        # If no active channels, return None
+        if not group_channels:
+            return None
+        
+        # If there are active channels, return the group name
+        # This maintains compatibility with any existing code that expects the group name
+        return group_name
     
     def __str__(self) -> str:
         return f"{self.name} ({self.user})"

@@ -25,7 +25,7 @@ from django.views.generic import TemplateView
 def home_redirect(request):
     if request.user.is_authenticated:
         # If user is authenticated, redirect to remote dashboard
-        return redirect('ha_dashboard')  # Change this to use your view function
+        return redirect('dashboard') 
     # Otherwise redirect to login
     return redirect('login')
 

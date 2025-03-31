@@ -12,19 +12,26 @@ from core.models import Site
 
 @login_required
 def dashboard(request):
-    # Get sites the user has access to
-    sites = Site.objects.filter(user__username=request.user.username)
-    return render(request, 'ha_remote/dashboard.html', {
+    """Show all available HA sites for the user"""
+    # Get sites owned by the user
+    sites = Site.objects.filter(user=request.user)
+    print(f"Site status from DB: {[(site.name, site.ws_connected) for site in sites]}")
+    
+    return render(request, 'dashboard.html', {
         'sites': sites
     })
 
 @login_required
-def frontend(request, site_id):
-    # Verify user has access to this site
-    site = get_object_or_404(Site, id=site_id, user__username=request.user.username)
-    return render(request, 'ha_remote/frontend.html', {
-        'site': site,
-        'ws_url': f"ws://{request.get_host()}/ws/opp_energy/",
+def site_interface(request, site_id):
+    """Interface for controlling a specific HA site"""
+    site = get_object_or_404(Site, id=site_id)
+    
+    # Check if user is the owner
+    if site.user != request.user:
+        return HttpResponseForbidden("You don't have access to this Home Assistant site")
+    
+    return render(request, 'site_interface.html', {
+        'site': site
     })
 
 @login_required
@@ -43,15 +50,17 @@ def site_status(request, site_id):
 
 @login_required
 def delete_site(request, site_id):
-    """Delete a site that belongs to the current user."""
-    site = get_object_or_404(Site, id=site_id, user=request.user)
+    """Delete a site"""
+    site = get_object_or_404(Site, id=site_id)
     
-    if request.method == 'POST':
-        site_name = site.name
-        site.delete()
-        messages.success(request, f'Site "{site_name}" has been deleted.')
-        return redirect('ha_dashboard')
+    # Check if user is the owner
+    if site.user != request.user:
+        messages.error(request, "You don't have permission to delete this site.")
+        return redirect('dashboard')
     
-    return render(request, 'ha_remote/confirm_delete.html', {
-        'site': site
-    })
+    # Delete the site
+    site_name = site.name
+    site.delete()
+    
+    messages.success(request, f"Site '{site_name}' has been deleted.")
+    return redirect('dashboard')

@@ -82,45 +82,98 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
             print(f"User disconnected: {self.user_name}")
 
     async def receive(self, text_data):
-        print("\n=== Received WebSocket Message ===")
-        print(f"Raw message: {text_data}")
-        
         try:
+            # Parse the incoming data
             data = json.loads(text_data)
-            message_type = data.get("type")
-            print(f"Message type: {message_type}")
-            print(f"Message data: {data}")
-            if message_type == "ping":
-                await self.handle_ping()
-            elif message_type == "user_registration":
-                await self.handle_user_registration(data)
-            elif message_type == "authenticate":
-                await self.handle_authentication(data)
-            elif message_type == "subscribe_prices":
-                await self.handle_price_subscription(data)
-            elif message_type == "get_prices": 
-                await self.handle_get_prices(data)
-            elif message_type == "get_hass_state":
-                await self.handle_get_hass_state(data)
-            else:
-                print(f"Unknown message type: {message_type}")
-                await self.send(json.dumps({
-                    "type": "error",
-                    "message": f"Unknown message type: {message_type}"
+            print(f"\n=== Frontend message received ===")
+            print(f"Message: {data}")
+            
+            # Special handling for common requests
+            message_type = data.get('type')
+            message_id = data.get('id', 'unknown')
+            
+            # Handle get_states separately
+            if message_type == 'get_states':
+                # For testing, respond with mock entities
+                mock_entities = {
+                    "light.living_room": {
+                        "entity_id": "light.living_room",
+                        "state": "on",
+                        "attributes": {"friendly_name": "Living Room Light", "brightness": 255}
+                    },
+                    "switch.kitchen": {
+                        "entity_id": "switch.kitchen",
+                        "state": "off",
+                        "attributes": {"friendly_name": "Kitchen Switch"}
+                    },
+                    "sensor.temperature": {
+                        "entity_id": "sensor.temperature",
+                        "state": "21.5",
+                        "attributes": {"friendly_name": "Living Room Temperature", "unit_of_measurement": "°C"}
+                    }
+                }
+                
+                await self.send(text_data=json.dumps({
+                    "id": message_id,
+                    "type": "result",
+                    "success": True,
+                    "result": mock_entities
                 }))
+                print(f"Sent mock entity data in response to get_states (ID: {message_id})")
+                return
+                
+            # Handle call_service
+            elif message_type == 'call_service':
+                domain = data.get('domain')
+                service = data.get('service')
+                service_data = data.get('service_data', {})
+                
+                print(f"Service call: {domain}.{service} with {service_data}")
+                
+                # Mock successful service call
+                await self.send(text_data=json.dumps({
+                    "id": message_id,
+                    "type": "result",
+                    "success": True,
+                    "result": {}
+                }))
+                print(f"Sent success response for service call (ID: {message_id})")
+                return
+            
+            # Handle ping messages directly
+            elif message_type == 'ping':
+                await self.send(text_data=json.dumps({
+                    "type": "pong"
+                }))
+                print("Responded to ping with pong")
+                return
+                
+            # Forward other messages to the site group
+            site_group = f"site_{self.site_id}"
+            
+            # Forward the command to any OppEnergyConsumer in the site group
+            await self.channel_layer.group_send(
+                site_group,
+                {
+                    'type': 'ha_command',
+                    'command': data,
+                    'relay_channel': self.channel_name,
+                    'command_id': message_id,
+                    # Pass the site_id explicitly as a parameter
+                    'site_id': self.site_id
+                }
+            )
+            print(f"Forwarded {message_type} command to site group (ID: {message_id})")
+            
         except json.JSONDecodeError as e:
-            print(f"JSON decode error: {str(e)}")
-            await self.send(json.dumps({
-                "type": "error",
-                "message": "Invalid JSON format"
-            }))
+            print(f"Invalid JSON received from frontend client: {e}")
         except Exception as e:
-            print(f"Error processing message: {str(e)}")
-            await self.send(json.dumps({
-                "type": "error",
-                "message": f"Internal server error: {str(e)}"
+            print(f"Error in SiteFrontendConsumer.receive: {str(e)}")
+            await self.send(text_data=json.dumps({
+                'type': 'error',
+                'message': f'Failed to process request: {str(e)}'
             }))
-
+        
     @database_sync_to_async
     def verify_user_credentials(self, email, password):
         """Verify user credentials against the database."""
@@ -215,9 +268,9 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
                     self.user_name = username
                     self.site = site
                     
-                    # Generate a unique instance ID if not already set
-                    if not site.instance_id:
-                        site.instance_id = f"opp_energy_{email}_{site_name}"
+                    # Generate a unique site ID if not already set
+                    if not site.site_id:
+                        site.site_id = f"opp_energy_{email}_{site_name}"
                         await database_sync_to_async(site.save)()
                     
                     # Add this connection to a group specific to this site
@@ -314,10 +367,10 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
         """Handle request for Home Assistant state."""
         print("\n=== Home Assistant State Request ===")
         username = data.get("user_name")
-        instance_id = data.get("instance_id")
+        site_id = data.get("site_id")
         entity_id = data.get("entity_id")  # Optional - specify a particular entity
         
-        print(f"HA state request for user: {username}, instance: {instance_id}")
+        print(f"HA state request for user: {username}, site: {site_id}")
         
         if not self.authenticated:
             print("User not authenticated for HA state request")
@@ -334,12 +387,12 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
             # Send request to get HA state
             await self.send(json.dumps({
                 "type": "get_hass_state_request",
-                "instance_id": instance_id,
+                "site_id": site_id,
                 "entity_id": entity_id,
                 "id": message_id
             }))
             
-            print(f"Sent Home Assistant state request to instance {instance_id}")
+            print(f"Sent Home Assistant state request to site {site_id}")
             
         except Exception as e:
             print(f"Error handling HA state request: {str(e)}")
@@ -405,19 +458,200 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
         # Process the command
         command = event['command']
         command_type = command.get('type')
+        command_id = event['command_id']
         
-        # Implement handlers for various Home Assistant commands
-        # This is where you'd add the actual implementation
+        print(f"Processing HA command: {command_type} (ID: {command_id})")
         
-        # Send response back to the relay
-        await self.channel_layer.send(
-            event['relay_channel'],
-            {
-                'type': 'ha_response',
-                'response': {
-                    'id': event['command_id'],
-                    'success': True,
-                    'result': {}  # Populate with actual result
+        # Handle get_states command
+        if command_type == "get_states":
+            try:
+                # In a real implementation, you would get actual states
+                # For now, just respond with some mock data
+                mock_entities = {
+                    "light.living_room": {
+                        "entity_id": "light.living_room",
+                        "state": "on",
+                        "attributes": {"friendly_name": "Living Room Light", "brightness": 255}
+                    },
+                    "switch.kitchen": {
+                        "entity_id": "switch.kitchen",
+                        "state": "off",
+                        "attributes": {"friendly_name": "Kitchen Switch"}
+                    },
+                    "sensor.temperature": {
+                        "entity_id": "sensor.temperature",
+                        "state": "21.5",
+                        "attributes": {"friendly_name": "Living Room Temperature", "unit_of_measurement": "°C"}
+                    }
                 }
-            }
+                
+                await self.channel_layer.send(
+                    event['relay_channel'],
+                    {
+                        'type': 'ha_response',
+                        'response': {
+                            'id': command_id,
+                            'success': True,
+                            'result': mock_entities
+                        }
+                    }
+                )
+                print(f"Sent mock entity data response for {command_id}")
+            except Exception as e:
+                print(f"Error handling get_states command: {str(e)}")
+                await self.channel_layer.send(
+                    event['relay_channel'],
+                    {
+                        'type': 'ha_response',
+                        'response': {
+                            'id': command_id,
+                            'success': False,
+                            'error': {
+                                'message': str(e)
+                            }
+                        }
+                    }
+                )
+        # Handle call_service command
+        elif command_type == "call_service":
+            domain = command.get("domain")
+            service = command.get("service")
+            service_data = command.get("service_data", {})
+            
+            print(f"Service call: {domain}.{service} with {service_data}")
+            
+            # In a real implementation, you would forward this to Home Assistant
+            # For now, just acknowledge receipt
+            await self.channel_layer.send(
+                event['relay_channel'],
+                {
+                    'type': 'ha_response',
+                    'response': {
+                        'id': command_id,
+                        'success': True,
+                        'result': {}
+                    }
+                }
+            )
+        else:
+            print(f"Unhandled command type: {command_type}")
+            # Send a default response
+            await self.channel_layer.send(
+                event['relay_channel'],
+                {
+                    'type': 'ha_response',
+                    'response': {
+                        'id': command_id,
+                        'success': True,
+                        'result': {}
+                    }
+                }
+            )
+
+class SiteFrontendConsumer(AsyncWebsocketConsumer):
+    """Consumer for frontend clients connecting to control Home Assistant"""
+    
+    @property
+    def Site(self):
+        return apps.get_model('core', 'Site')
+    
+    async def connect(self):
+        self.site_id = self.scope['url_route']['kwargs']['site_id']
+        self.user = self.scope['user']
+        self.frontend_group = f"frontend_{self.site_id}"
+        
+        # Check if user has permission to access this site
+        has_permission = await self.check_user_permission()
+        if not has_permission or not self.user.is_authenticated:
+            await self.close(code=4003)
+            return
+        
+        # Add to frontend group for this site
+        await self.channel_layer.group_add(
+            self.frontend_group,
+            self.channel_name
         )
+        
+        # Accept the connection
+        await self.accept()
+        
+        # Find the corresponding site group
+        site_group = f"site_{self.site_id}"
+        
+        # Check if there's an active OppEnergyConsumer for this site
+        channels = self.channel_layer.groups.get(site_group, set())
+        site_connected = len(channels) > 0
+        
+        # Send connection status
+        await self.send(text_data=json.dumps({
+            'type': 'auth_ok',
+            'ha_connected': site_connected
+        }))
+    
+    async def disconnect(self, close_code):
+        # Remove from frontend group
+        if hasattr(self, 'frontend_group'):
+            await self.channel_layer.group_discard(
+                self.frontend_group,
+                self.channel_name
+            )
+    
+    async def receive(self, text_data):
+        try:
+            # Parse the incoming data
+            data = json.loads(text_data)
+            
+            # Forward to the site group
+            site_group = f"site_{self.site_id}"
+            
+            # Add session info to the message
+            data['frontend_channel'] = self.channel_name
+            
+            # Forward the command to any OppEnergyConsumer in the site group
+            await self.channel_layer.group_send(
+                site_group,
+                {
+                    'type': 'ha_command',
+                    'command': data,
+                    'relay_channel': self.channel_name,
+                    'command_id': data.get('id', str(datetime.now().timestamp()))
+                }
+            )
+            
+        except json.JSONDecodeError:
+            print(f"Invalid JSON received from frontend client")
+        except Exception as e:
+            print(f"Error forwarding message to HA: {str(e)}")
+            await self.send(text_data=json.dumps({
+                'type': 'error',
+                'message': f'Failed to communicate with Home Assistant: {str(e)}'
+            }))
+    
+    async def ha_response(self, event):
+        """Handle responses from Home Assistant"""
+        await self.send(text_data=json.dumps(event['response']))
+    
+    async def ha_state_update(self, event):
+        """Handle state updates from Home Assistant"""
+        await self.send(text_data=json.dumps({
+            'type': 'result',
+            'result': {
+                'type': 'state_update',
+                'states': event['states']
+            }
+        }))
+    
+    @database_sync_to_async
+    def check_user_permission(self):
+        try:
+            # Check if user is the site owner
+            site_owner = self.Site.objects.filter(
+                id=self.site_id,
+                user=self.user
+            ).exists()
+            
+            return site_owner
+        except Exception as e:
+            print(f"Error checking user permission: {str(e)}")
+            return False
+        

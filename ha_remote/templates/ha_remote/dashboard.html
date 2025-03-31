@@ -1,46 +1,49 @@
-<!-- ha_remote/templates/ha_remote/dashboard.html -->
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Home Assistant Sites</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-</head>
-<body>
-    <div class="container mt-5">
-        <h1>Your Home Assistant Sites</h1>
+<!-- templates/dashboard.html -->
+{% extends 'base.html' %}
 
-        {% if messages %}
-        <div class="row mt-3">
-            <div class="col-12">
-                {% for message in messages %}
-                <div class="alert alert-{{ message.tags }}">{{ message }}</div>
-                {% endfor %}
-            </div>
-        </div>
-        {% endif %}
+{% block title %}Dashboard - Remote HA{% endblock %}
 
-        <div class="row mt-4">
-            {% for site in sites %}
-            <div class="col-md-4 mb-4">
-                <div class="card">
-                    <div class="card-body">
-                        <h5 class="card-title">{{ site.name }}</h5>
-                        <p class="card-text">{{ site.description|default:"No description" }}</p>
-                        <div class="d-flex justify-content-between">
-                            <a href="{% url 'ha_frontend' site.id %}" class="btn btn-primary">Connect</a>
-                            <a href="{% url 'delete_site' site.id %}" class="btn btn-outline-danger">Delete</a>
-                        </div>
-                    </div>
+{% block content %}
+<div class="dashboard-container">
+    <h2>Your Home Assistant Sites</h2>
+    
+    {% if messages %}
+    <div class="messages">
+        {% for message in messages %}
+        <div class="alert alert-{{ message.tags }}">{{ message }}</div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    
+    <div class="sites-grid">
+        {% for site in sites %}
+            <div class="site-card {% if site.ws_connected%}connected{% else %}disconnected{% endif %}">
+                <h3>{{ site.name }}</h3>
+                <div class="status-indicator"></div>
+                <p>Status: {% if site.ws_connected%}Connected{% else %}Disconnected{% endif %}</p>
+                {% if site.last_connected %}
+                    <p>Last seen: {{ site.last_connected|timesince }} ago</p>
+                {% endif %}
+                
+                <div class="action-buttons">
+                    {% if site.ws_connected%}
+                        <a href="{% url 'site_interface' site.id %}" class="connect-button">
+                            Connect
+                        </a>
+                    {% else %}
+                        <button disabled class="connect-button disabled">
+                            Unavailable
+                        </button>
+                    {% endif %}
+                    
+                    <a href="{% url 'delete_site' site.id %}" class="delete-button">
+                        Delete
+                    </a>
                 </div>
             </div>
-            {% empty %}
-            <div class="col-12">
-                <div class="alert alert-info">You don't have any Home Assistant sites registered.</div>
-            </div>
-            {% endfor %}
-        </div>
+        {% empty %}
+            <p>No Home Assistant sites available. Please connect a site first.</p>
+        {% endfor %}
     </div>
-</body>
-</html>
+</div>
+{% endblock %}

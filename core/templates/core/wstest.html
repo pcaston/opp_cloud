@@ -51,7 +51,7 @@
             Host: <span id="hostInfo"></span><br>
             WebSocket URL: <span id="wsUrlInfo"></span><br>
             WebSocket State: <span id="wsState"></span><br>
-            Instance ID: <span id="instanceInfo"></span>
+            Instance ID: <span id="siteInfo"></span>
         </div>
     </div>
 
@@ -60,7 +60,7 @@
         <h3>Site Registration</h3>
         <input type="text" id="userName" placeholder="User Name">
         <input type="text" id="SiteId" placeholder="Site ID">
-        <input type="text" id="instanceId" placeholder="Instance ID">
+        <input type="text" id="siteId" placeholder="Instance ID">
         <button onclick="registerSite()" id="registerBtn" disabled>Register Site</button>
     </div>
 
@@ -130,11 +130,11 @@
             }
         }
 
-        // Update the WebSocket URL function to include instance_id
+        // Update the WebSocket URL function to include site_id
         function getWebSocketUrl() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const instanceId = document.getElementById('connInstanceId').value.trim() || 'test123';
-            return `${protocol}//${window.location.host}/ws/opp_energy/${instanceId}/`;
+            const siteId = document.getElementById('connInstanceId').value.trim() || 'test123';
+            return `${protocol}//${window.location.host}/ws/opp_energy/${siteId}/`;
         }
 
         // Add a server connection test function
@@ -166,12 +166,12 @@
         }
 
         function updateDebugInfo() {
-            const instanceId = document.getElementById('connInstanceId').value.trim() || 'test123';
+            const siteId = document.getElementById('connInstanceId').value.trim() || 'test123';
             document.getElementById('protocolInfo').textContent = window.location.protocol;
             document.getElementById('hostInfo').textContent = window.location.host;
             document.getElementById('wsUrlInfo').textContent = getWebSocketUrl();
-            document.getElementById('wsState').textContent = ws ? ws.readyState : 'No WebSocket instance';
-            document.getElementById('instanceInfo').textContent = instanceId;
+            document.getElementById('wsState').textContent = ws ? ws.readyState : 'No WebSocket site';
+            document.getElementById('siteInfo').textContent = siteId;
         }
 
         function updateButtons(connected) {
@@ -186,8 +186,8 @@
         }
 
         function connect() {
-            const instanceId = document.getElementById('connInstanceId').value.trim();
-            if (!instanceId) {
+            const siteId = document.getElementById('connInstanceId').value.trim();
+            if (!siteId) {
                 addLog('Please enter an Instance ID for connection', 'error');
                 return;
             }
@@ -225,7 +225,7 @@
                     try {
                         ws.send(JSON.stringify({
                             type: 'connection_init',
-                            instance_id: document.getElementById('connInstanceId').value.trim()
+                            site_id: document.getElementById('connInstanceId').value.trim()
                         }));
                     } catch (error) {
                         addLog(`Error sending initial handshake: ${error.message}`, 'error');
@@ -265,7 +265,7 @@
                                 message = `Registration successful: ${data.message}`;
                                 break;
                             case 'login_success':
-                                message = `Login successful - User: ${data.user_name}, Instance: ${data.instance_id}`;
+                                message = `Login successful - User: ${data.user_name}, Instance: ${data.site_id}`;
                                 break;
                             case 'Site_list':
                                 message = `Registered sites: ${data.sites.join(', ')}`;
@@ -356,9 +356,9 @@
             
             const userName = document.getElementById('userName').value.trim();
             const siteId = document.getElementById('siteId').value.trim();
-            const instanceId = document.getElementById('instanceId').value.trim();
+            const siteId = document.getElementById('siteId').value.trim();
             
-            if (!userName || !siteId || !instanceId) {
+            if (!userName || !siteId || !siteId) {
                 addLog('Please fill in all registration fields', 'error');
                 return;
             }
@@ -367,7 +367,7 @@
                 type: 'register_site',
                 user_name: userName,
                 site_id: siteId,
-                instance_id: instanceId
+                site_id: siteId
             };
             
             ws.send(JSON.stringify(message));

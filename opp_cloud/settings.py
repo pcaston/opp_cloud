@@ -144,6 +144,7 @@ TEMPLATES = [
         'DIRS': [
             os.path.join(BASE_DIR, 'core/templates'),
             os.path.join(BASE_DIR, 'ha_remote/templates'), 
+            os.path.join(BASE_DIR, 'ha_remote/templates/ha_remote'), 
             ],
         "APP_DIRS": True,
         "OPTIONS": {
@@ -221,7 +222,7 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 LOGIN_URL = '/accounts/login/'
-LOGOUT_URL = '/accounts/logout/'
+LOGOUT_URL = '/logout/'
 AUTH_USER_MODEL = 'core.CustomUser'
 LOGIN_REDIRECT_URL = '/remote/'  # Where to go after successful login
 
@@ -240,8 +241,10 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
 
-STATIC_URL = "static/"
-
+STATIC_URL = "/static/"
+STATICFILES_DIRS = [
+    os.path.join(BASE_DIR, 'opp_cloud/static'),
+]
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
