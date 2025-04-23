@@ -57,6 +57,7 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
             self.ping_timeout_task = None
             self.last_ping = datetime.now()
             self.site = None  # Will be set during authentication
+            self.site_id = None
             print("Connection established")
         except Exception as e:
             print(f"Error during connection: {str(e)}")
@@ -91,6 +92,17 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
             # Special handling for common requests
             message_type = data.get('type')
             message_id = data.get('id', 'unknown')
+            
+            # Direct handling for registration and authentication
+            if message_type == 'user_registration':
+                print("Handling user registration directly in OppEnergyConsumer")
+                await self.handle_user_registration(data)
+                return
+                
+            if message_type == 'authenticate':
+                print("Handling authentication directly in OppEnergyConsumer")
+                await self.handle_authentication(data)
+                return
             
             # Handle get_states separately
             if message_type == 'get_states':
@@ -148,6 +160,16 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
                 print("Responded to ping with pong")
                 return
                 
+            # Only forward other messages if we have a site_id
+            if not hasattr(self, 'site_id') or self.site_id is None:
+                print(f"Cannot forward message - no site_id available")
+                await self.send(text_data=json.dumps({
+                    "type": "error",
+                    "message": "Not connected to a site",
+                    "id": message_id
+                }))
+                return
+                
             # Forward other messages to the site group
             site_group = f"site_{self.site_id}"
             
@@ -168,12 +190,12 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
         except json.JSONDecodeError as e:
             print(f"Invalid JSON received from frontend client: {e}")
         except Exception as e:
-            print(f"Error in SiteFrontendConsumer.receive: {str(e)}")
+            print(f"Error in OppEnergyConsumer.receive: {str(e)}")
             await self.send(text_data=json.dumps({
                 'type': 'error',
                 'message': f'Failed to process request: {str(e)}'
             }))
-        
+                
     @database_sync_to_async
     def verify_user_credentials(self, email, password):
         """Verify user credentials against the database."""
@@ -235,19 +257,36 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
                 # Rollback user creation if site registration fails
                 await database_sync_to_async(user.delete)()
                 raise Exception("Failed to register site")
+                
+            # Initialize site_id after successful registration
+            self.site = site
+            self.site_id = site.id
+            self.authenticated = True
+            self.user_name = display_name
+
+            # Add this connection to the site group
+            site_group = f"site_{site.id}"
+            await self.channel_layer.group_add(site_group, self.channel_name)
+            
+            # Update site connection status
+            site.ws_connected = True
+            site.last_connected = datetime.now()
+            await database_sync_to_async(site.save)()
 
             await self.send(json.dumps({
                 "type": "registration_success",
-                "message": "User and site registered successfully"
+                "message": "User and site registered successfully",
+                "id": message_id
             }))
             
         except Exception as e:
             print(f"Error during registration: {str(e)}")
             await self.send(json.dumps({
                 "type": "error",
-                "message": f"Registration failed: {str(e)}"
+                "message": f"Registration failed: {str(e)}",
+                "id": message_id
             }))
-
+        
     async def handle_authentication(self, data):
         """Handle authentication request."""
         print("\n=== Authentication Attempt ===")
@@ -267,6 +306,7 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
                     self.authenticated = True
                     self.user_name = username
                     self.site = site
+                    self.site_id = site.id 
                     
                     # Generate a unique site ID if not already set
                     if not site.site_id:
@@ -436,117 +476,105 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
             "sell_price": 0.03 
         }
 
-    async def ha_command(self, event):
-        """Handle Home Assistant command relayed from the frontend."""
-        if not self.authenticated or not hasattr(self, 'site'):
-            # Send error response
+async def ha_command(self, event):
+    """Handle Home Assistant command relayed from the frontend."""
+    if not self.authenticated or not hasattr(self, 'site'):
+        # Send error response
+        await self.channel_layer.send(
+            event['relay_channel'],
+            {
+                'type': 'ha_response',
+                'response': {
+                    'id': event['command_id'],
+                    'success': False,
+                    'error': {
+                        'message': 'Not authenticated'
+                    }
+                }
+            }
+        )
+        return
+            
+    # Process the command
+    command = event['command']
+    command_type = command.get('type')
+    command_id = event['command_id']
+    
+    # Get the site_id from the command or the site object
+    # This fixes the attribute error
+    site_id = None
+    if 'site_id' in event:
+        site_id = event['site_id']
+    elif hasattr(self, 'site') and hasattr(self.site, 'id'):
+        site_id = self.site.id
+    
+    print(f"Processing HA command: {command_type} (ID: {command_id}) for site {site_id}")
+    
+    # Handle get_states command
+    if command_type == "get_states":
+        try:
+            # In a real implementation, you would get actual states
+            # For now, just respond with some mock data
+            mock_entities = {
+                "light.living_room": {
+                    "entity_id": "light.living_room",
+                    "state": "on",
+                    "attributes": {"friendly_name": "Living Room Light", "brightness": 255}
+                },
+                "switch.kitchen": {
+                    "entity_id": "switch.kitchen",
+                    "state": "off",
+                    "attributes": {"friendly_name": "Kitchen Switch"}
+                },
+                "sensor.temperature": {
+                    "entity_id": "sensor.temperature",
+                    "state": "21.5",
+                    "attributes": {"friendly_name": "Living Room Temperature", "unit_of_measurement": "°C"}
+                }
+            }
+            
             await self.channel_layer.send(
                 event['relay_channel'],
                 {
                     'type': 'ha_response',
                     'response': {
-                        'id': event['command_id'],
+                        'id': command_id,
+                        'success': True,
+                        'result': mock_entities
+                    }
+                }
+            )
+            print(f"Sent mock entity data response for {command_id}")
+        except Exception as e:
+            print(f"Error handling get_states command: {str(e)}")
+            await self.channel_layer.send(
+                event['relay_channel'],
+                {
+                    'type': 'ha_response',
+                    'response': {
+                        'id': command_id,
                         'success': False,
                         'error': {
-                            'message': 'Not authenticated'
+                            'message': str(e)
                         }
                     }
                 }
             )
-            return
-            
-        # Process the command
-        command = event['command']
-        command_type = command.get('type')
-        command_id = event['command_id']
-        
-        print(f"Processing HA command: {command_type} (ID: {command_id})")
-        
-        # Handle get_states command
-        if command_type == "get_states":
-            try:
-                # In a real implementation, you would get actual states
-                # For now, just respond with some mock data
-                mock_entities = {
-                    "light.living_room": {
-                        "entity_id": "light.living_room",
-                        "state": "on",
-                        "attributes": {"friendly_name": "Living Room Light", "brightness": 255}
-                    },
-                    "switch.kitchen": {
-                        "entity_id": "switch.kitchen",
-                        "state": "off",
-                        "attributes": {"friendly_name": "Kitchen Switch"}
-                    },
-                    "sensor.temperature": {
-                        "entity_id": "sensor.temperature",
-                        "state": "21.5",
-                        "attributes": {"friendly_name": "Living Room Temperature", "unit_of_measurement": "°C"}
-                    }
+    # Other command handlers...
+    else:
+        print(f"Unhandled command type: {command_type}")
+        # Send a default response
+        await self.channel_layer.send(
+            event['relay_channel'],
+            {
+                'type': 'ha_response',
+                'response': {
+                    'id': command_id,
+                    'success': True,
+                    'result': {}
                 }
-                
-                await self.channel_layer.send(
-                    event['relay_channel'],
-                    {
-                        'type': 'ha_response',
-                        'response': {
-                            'id': command_id,
-                            'success': True,
-                            'result': mock_entities
-                        }
-                    }
-                )
-                print(f"Sent mock entity data response for {command_id}")
-            except Exception as e:
-                print(f"Error handling get_states command: {str(e)}")
-                await self.channel_layer.send(
-                    event['relay_channel'],
-                    {
-                        'type': 'ha_response',
-                        'response': {
-                            'id': command_id,
-                            'success': False,
-                            'error': {
-                                'message': str(e)
-                            }
-                        }
-                    }
-                )
-        # Handle call_service command
-        elif command_type == "call_service":
-            domain = command.get("domain")
-            service = command.get("service")
-            service_data = command.get("service_data", {})
-            
-            print(f"Service call: {domain}.{service} with {service_data}")
-            
-            # In a real implementation, you would forward this to Home Assistant
-            # For now, just acknowledge receipt
-            await self.channel_layer.send(
-                event['relay_channel'],
-                {
-                    'type': 'ha_response',
-                    'response': {
-                        'id': command_id,
-                        'success': True,
-                        'result': {}
-                    }
-                }
-            )
-        else:
-            print(f"Unhandled command type: {command_type}")
-            # Send a default response
-            await self.channel_layer.send(
-                event['relay_channel'],
-                {
-                    'type': 'ha_response',
-                    'response': {
-                        'id': command_id,
-                        'success': True,
-                        'result': {}
-                    }
-                }
-            )
+            }
+        )
 
 class SiteFrontendConsumer(AsyncWebsocketConsumer):
     """Consumer for frontend clients connecting to control Home Assistant"""
@@ -600,8 +628,28 @@ class SiteFrontendConsumer(AsyncWebsocketConsumer):
         try:
             # Parse the incoming data
             data = json.loads(text_data)
+            print(f"\n=== Frontend message received ===")
+            print(f"Message: {data}")
             
-            # Forward to the site group
+            # Special handling for common requests
+            message_type = data.get('type')
+            message_id = data.get('id', 'unknown')
+            
+            # Add special handling for registration
+            if message_type == 'user_registration':
+                print("Handling user registration directly")
+                # Create a new OppEnergyConsumer instance or call its method directly
+                opp_consumer = OppEnergyConsumer()
+                # Initialize it minimally
+                opp_consumer.channel_layer = self.channel_layer
+                opp_consumer.channel_name = self.channel_name
+                # Set the send method
+                opp_consumer.send = self.send
+                # Call the registration handler
+                await opp_consumer.handle_user_registration(data, message_id)
+                return
+                
+            # Forward other messages to the site group
             site_group = f"site_{self.site_id}"
             
             # Add session info to the message
@@ -617,16 +665,17 @@ class SiteFrontendConsumer(AsyncWebsocketConsumer):
                     'command_id': data.get('id', str(datetime.now().timestamp()))
                 }
             )
+            print(f"Forwarded {message_type} command to site group (ID: {message_id})")
             
         except json.JSONDecodeError:
             print(f"Invalid JSON received from frontend client")
         except Exception as e:
-            print(f"Error forwarding message to HA: {str(e)}")
+            print(f"Error in SiteFrontendConsumer.receive: {str(e)}")
             await self.send(text_data=json.dumps({
                 'type': 'error',
                 'message': f'Failed to communicate with Home Assistant: {str(e)}'
             }))
-    
+
     async def ha_response(self, event):
         """Handle responses from Home Assistant"""
         await self.send(text_data=json.dumps(event['response']))
