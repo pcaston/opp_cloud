@@ -11,11 +11,22 @@ import os
 from django.core.asgi import get_asgi_application
 from channels.routing import ProtocolTypeRouter, URLRouter
 from channels.auth import AuthMiddlewareStack
-from core.routing import websocket_urlpatterns
+import django
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'opp_cloud.settings')
+django.setup()
+
+# Import WebSocket URL patterns from core - these should take priority
+from core.routing import websocket_urlpatterns as core_websocket_urlpatterns
+
+# Import the ha_remote patterns separately for clarity
+from ha_remote.routing import websocket_urlpatterns as ha_remote_websocket_urlpatterns
+
+# IMPORTANT: Put core patterns BEFORE ha_remote patterns to ensure
+# they get priority in routing decisions
+all_websocket_urlpatterns = core_websocket_urlpatterns + ha_remote_websocket_urlpatterns
 
 application = ProtocolTypeRouter({
     "http": get_asgi_application(),
-    "websocket": AuthMiddlewareStack(URLRouter(websocket_urlpatterns)),
+    "websocket": AuthMiddlewareStack(URLRouter(all_websocket_urlpatterns)),
 })

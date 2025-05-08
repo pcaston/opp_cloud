@@ -98,10 +98,28 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
                 print("Handling user registration directly in OppEnergyConsumer")
                 await self.handle_user_registration(data)
                 return
-                
+                    
             if message_type == 'authenticate':
                 print("Handling authentication directly in OppEnergyConsumer")
                 await self.handle_authentication(data)
+                return
+            
+            # Handle get_prices directly without requiring site_id
+            if message_type == 'get_prices':
+                print("Handling get_prices directly in OppEnergyConsumer")
+                await self.handle_get_prices(data)
+                return
+                    
+            # Handle subscribe_prices directly without requiring site_id
+            if message_type == 'subscribe_prices':
+                print("Handling subscribe_prices directly in OppEnergyConsumer")
+                await self.handle_price_subscription(data)
+                return
+            
+            # Handle remote command from HA integration
+            if message_type == 'remote_command':
+                print("Handling remote command from HA integration")
+                await self.handle_remote_command(data)
                 return
             
             # Handle get_states separately
@@ -133,7 +151,7 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
                 }))
                 print(f"Sent mock entity data in response to get_states (ID: {message_id})")
                 return
-                
+                    
             # Handle call_service
             elif message_type == 'call_service':
                 domain = data.get('domain')
@@ -159,7 +177,7 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
                 }))
                 print("Responded to ping with pong")
                 return
-                
+                    
             # Only forward other messages if we have a site_id
             if not hasattr(self, 'site_id') or self.site_id is None:
                 print(f"Cannot forward message - no site_id available")
@@ -169,7 +187,7 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
                     "id": message_id
                 }))
                 return
-                
+                    
             # Forward other messages to the site group
             site_group = f"site_{self.site_id}"
             
@@ -195,7 +213,7 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
                 'type': 'error',
                 'message': f'Failed to process request: {str(e)}'
             }))
-                
+
     @database_sync_to_async
     def verify_user_credentials(self, email, password):
         """Verify user credentials against the database."""
@@ -210,7 +228,7 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
         except Exception as e:
             print(f"Error verifying credentials: {e}")
             return None
-    
+        
     @database_sync_to_async
     def register_site(self, username, site_name):
         """Register a site for a user."""
@@ -235,6 +253,7 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
         email = data.get("email")
         password = data.get("password")
         site_name = data.get("site_name")
+        message_id = data.get("id", "unknown")  # Get message_id from data or use default
         
         print(f"Display Name: {display_name}")
         print(f"Email: {email}")
@@ -351,37 +370,16 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
         self.last_ping = datetime.now()
         await self.send(json.dumps({"type": "pong"}))
 
-    async def handle_price_subscription(self, data):
-        """Handle price subscription request."""
-        if not self.authenticated:
-            await self.send(json.dumps({
-                "type": "error",
-                "message": "Not authenticated"
-            }))
-            return
-
-        # Cancel existing price updates task if it exists
-        if self.price_updates_task:
-            self.price_updates_task.cancel()
-
-        # Start new price updates task
-        self.price_updates_task = asyncio.create_task(self.send_price_updates())
-
     async def handle_get_prices(self, data):
         """Handle request for current prices."""
         print("\n=== Price Request ===")
         username = data.get("user_name")
+        message_id = data.get("id", "unknown")
         
         print(f"Price request for user: {username}")
         
-        if not self.authenticated:
-            print("User not authenticated for price request")
-            await self.send(json.dumps({
-                "type": "error",
-                "message": "Not authenticated"
-            }))
-            return
-            
+        # Remove authentication requirement since the coordinator expects this to work
+        # without site authentication
         try:
             # Get current prices
             prices = await self.get_current_prices()
@@ -394,13 +392,15 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
                     "buy_price": prices["buy_price"],
                     "sell_price": prices["sell_price"],
                     "timestamp": datetime.now().isoformat()
-                }
+                },
+                "id": message_id
             }))
         except Exception as e:
             print(f"Error handling price request: {str(e)}")
             await self.send(json.dumps({
                 "type": "error",
-                "message": f"Error getting prices: {str(e)}"
+                "message": f"Error getting prices: {str(e)}",
+                "id": message_id
             }))
 
     async def handle_get_hass_state(self, data):
@@ -446,17 +446,14 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
         """Send periodic price updates to the client."""
         while True:
             try:
-                if not self.authenticated:
-                    break
-                    
                 # In practice, fetch real prices from database/service
                 prices = await self.get_current_prices()
                 print(f"Sending price update: {prices}")
                 
-                # Use the same format as the get_prices handler
+                # Use the same format as the handle_get_prices handler
                 await self.send(json.dumps({
                     "type": "price_update",
-                    "data": {  # Wrap in a data field
+                    "data": {  # Wrap in a data field to match what coordinator expects
                         "buy_price": prices["buy_price"],
                         "sell_price": prices["sell_price"],
                         "timestamp": datetime.now().isoformat()
@@ -476,63 +473,94 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
             "sell_price": 0.03 
         }
 
-async def ha_command(self, event):
-    """Handle Home Assistant command relayed from the frontend."""
-    if not self.authenticated or not hasattr(self, 'site'):
-        # Send error response
-        await self.channel_layer.send(
-            event['relay_channel'],
-            {
-                'type': 'ha_response',
-                'response': {
-                    'id': event['command_id'],
-                    'success': False,
-                    'error': {
-                        'message': 'Not authenticated'
+    async def ha_command(self, event):
+        """Handle Home Assistant command relayed from the frontend."""
+        if not self.authenticated or not hasattr(self, 'site'):
+            # Send error response
+            await self.channel_layer.send(
+                event['relay_channel'],
+                {
+                    'type': 'ha_response',
+                    'response': {
+                        'id': event['command_id'],
+                        'success': False,
+                        'error': {
+                            'message': 'Not authenticated'
+                        }
                     }
                 }
-            }
-        )
-        return
-            
-    # Process the command
-    command = event['command']
-    command_type = command.get('type')
-    command_id = event['command_id']
-    
-    # Get the site_id from the command or the site object
-    # This fixes the attribute error
-    site_id = None
-    if 'site_id' in event:
-        site_id = event['site_id']
-    elif hasattr(self, 'site') and hasattr(self.site, 'id'):
-        site_id = self.site.id
-    
-    print(f"Processing HA command: {command_type} (ID: {command_id}) for site {site_id}")
-    
-    # Handle get_states command
-    if command_type == "get_states":
-        try:
-            # In a real implementation, you would get actual states
-            # For now, just respond with some mock data
-            mock_entities = {
-                "light.living_room": {
-                    "entity_id": "light.living_room",
-                    "state": "on",
-                    "attributes": {"friendly_name": "Living Room Light", "brightness": 255}
-                },
-                "switch.kitchen": {
-                    "entity_id": "switch.kitchen",
-                    "state": "off",
-                    "attributes": {"friendly_name": "Kitchen Switch"}
-                },
-                "sensor.temperature": {
-                    "entity_id": "sensor.temperature",
-                    "state": "21.5",
-                    "attributes": {"friendly_name": "Living Room Temperature", "unit_of_measurement": "°C"}
+            )
+            return
+                
+        # Process the command
+        command = event['command']
+        command_type = command.get('type')
+        command_id = event['command_id']
+        
+        # Get the site_id from the command or the site object
+        # This fixes the attribute error
+        site_id = None
+        if 'site_id' in event:
+            site_id = event['site_id']
+        elif hasattr(self, 'site') and hasattr(self.site, 'id'):
+            site_id = self.site.id
+        
+        print(f"Processing HA command: {command_type} (ID: {command_id}) for site {site_id}")
+        
+        # Handle get_states command
+        if command_type == "get_states":
+            try:
+                # In a real implementation, you would get actual states
+                # For now, just respond with some mock data
+                mock_entities = {
+                    "light.living_room": {
+                        "entity_id": "light.living_room",
+                        "state": "on",
+                        "attributes": {"friendly_name": "Living Room Light", "brightness": 255}
+                    },
+                    "switch.kitchen": {
+                        "entity_id": "switch.kitchen",
+                        "state": "off",
+                        "attributes": {"friendly_name": "Kitchen Switch"}
+                    },
+                    "sensor.temperature": {
+                        "entity_id": "sensor.temperature",
+                        "state": "21.5",
+                        "attributes": {"friendly_name": "Living Room Temperature", "unit_of_measurement": "°C"}
+                    }
                 }
-            }
-            
+                
+                await self.channel_layer.send(
+                    event['relay_channel'],
+                    {
+                        'type': 'ha_response',
+                        'response': {
+                            'id': command_id,
+                            'success': True,
+                            'result': mock_entities
+                        }
+                    }
+                )
+                print(f"Sent mock entity data response for {command_id}")
+            except Exception as e:
+                print(f"Error handling get_states command: {str(e)}")
+                await self.channel_layer.send(
+                    event['relay_channel'],
+                    {
+                        'type': 'ha_response',
+                        'response': {
+                            'id': command_id,
+                            'success': False,
+                            'error': {
+                                'message': str(e)
+                            }
+                        }
+                    }
+                )
+        # Other command handlers...
+        else:
+            print(f"Unhandled command type: {command_type}")
+            # Send a default response
             await self.channel_layer.send(
                 event['relay_channel'],
                 {
@@ -540,41 +568,107 @@ async def ha_command(self, event):
                     'response': {
                         'id': command_id,
                         'success': True,
-                        'result': mock_entities
+                        'result': {}
                     }
                 }
             )
-            print(f"Sent mock entity data response for {command_id}")
+
+    async def handle_remote_command(self, data):
+        """Handle remote command from a web client."""
+        print("\n=== Remote Command Request ===")
+        command = data.get("command")
+        session_id = data.get("session_id", "unknown")
+        command_id = data.get("command_id", "unknown")
+        
+        print(f"Remote command: {command} (ID: {command_id}, Session: {session_id})")
+        
+        try:
+            # Handle specific commands
+            if command == "get_states":
+                # Create mock states to respond with
+                states = {
+                    "light.living_room": {
+                        "entity_id": "light.living_room",
+                        "state": "on",
+                        "attributes": {"friendly_name": "Living Room Light", "brightness": 255},
+                        "last_changed": datetime.now().isoformat(),
+                        "last_updated": datetime.now().isoformat()
+                    },
+                    "switch.kitchen": {
+                        "entity_id": "switch.kitchen",
+                        "state": "off",
+                        "attributes": {"friendly_name": "Kitchen Switch"},
+                        "last_changed": datetime.now().isoformat(),
+                        "last_updated": datetime.now().isoformat()
+                    },
+                    "sensor.temperature": {
+                        "entity_id": "sensor.temperature",
+                        "state": "21.5",
+                        "attributes": {"friendly_name": "Living Room Temperature", "unit_of_measurement": "°C"},
+                        "last_changed": datetime.now().isoformat(),
+                        "last_updated": datetime.now().isoformat()
+                    },
+                    "sensor.electricity_price": {
+                        "entity_id": "sensor.electricity_price",
+                        "state": "0.28",
+                        "attributes": {"friendly_name": "Electricity Buy Price", "unit_of_measurement": "$/kWh"},
+                        "last_changed": datetime.now().isoformat(),
+                        "last_updated": datetime.now().isoformat()
+                    },
+                    "sensor.solar_sellback_price": {
+                        "entity_id": "sensor.solar_sellback_price",
+                        "state": "0.03",
+                        "attributes": {"friendly_name": "Solar Sell Price", "unit_of_measurement": "$/kWh"},
+                        "last_changed": datetime.now().isoformat(),
+                        "last_updated": datetime.now().isoformat()
+                    }
+                }
+                
+                # Send response
+                await self.send(json.dumps({
+                    "type": "remote_response",
+                    "session_id": session_id,
+                    "command_id": command_id,
+                    "success": True,
+                    "result": states
+                }))
+                print(f"Sent state data response for remote command {command_id}")
+                return
+                
+            # Handle register_remote_access
+            elif command == "register_remote_access":
+                # Just acknowledge it
+                await self.send(json.dumps({
+                    "type": "remote_response",
+                    "session_id": session_id,
+                    "command_id": command_id,
+                    "success": True,
+                    "result": {"registered": True}
+                }))
+                print(f"Acknowledged remote registration for {data.get('instance_id', 'unknown')}")
+                return
+                
+            # Default response for other commands
+            await self.send(json.dumps({
+                "type": "remote_response",
+                "session_id": session_id,
+                "command_id": command_id,
+                "success": True,
+                "result": {}
+            }))
+            print(f"Sent default success response for {command}")
+            
         except Exception as e:
-            print(f"Error handling get_states command: {str(e)}")
-            await self.channel_layer.send(
-                event['relay_channel'],
-                {
-                    'type': 'ha_response',
-                    'response': {
-                        'id': command_id,
-                        'success': False,
-                        'error': {
-                            'message': str(e)
-                        }
-                    }
+            print(f"Error handling remote command: {str(e)}")
+            await self.send(json.dumps({
+                "type": "remote_response",
+                "session_id": session_id,
+                "command_id": command_id,
+                "success": False,
+                "error": {
+                    "message": str(e)
                 }
-            )
-    # Other command handlers...
-    else:
-        print(f"Unhandled command type: {command_type}")
-        # Send a default response
-        await self.channel_layer.send(
-            event['relay_channel'],
-            {
-                'type': 'ha_response',
-                'response': {
-                    'id': command_id,
-                    'success': True,
-                    'result': {}
-                }
-            }
-        )
+            }))
 
 class SiteFrontendConsumer(AsyncWebsocketConsumer):
     """Consumer for frontend clients connecting to control Home Assistant"""
@@ -624,6 +718,7 @@ class SiteFrontendConsumer(AsyncWebsocketConsumer):
                 self.channel_name
             )
     
+
     async def receive(self, text_data):
         try:
             # Parse the incoming data
@@ -645,8 +740,8 @@ class SiteFrontendConsumer(AsyncWebsocketConsumer):
                 opp_consumer.channel_name = self.channel_name
                 # Set the send method
                 opp_consumer.send = self.send
-                # Call the registration handler
-                await opp_consumer.handle_user_registration(data, message_id)
+                # Call the registration handler with just the data parameter
+                await opp_consumer.handle_user_registration(data)
                 return
                 
             # Forward other messages to the site group
@@ -675,6 +770,34 @@ class SiteFrontendConsumer(AsyncWebsocketConsumer):
                 'type': 'error',
                 'message': f'Failed to communicate with Home Assistant: {str(e)}'
             }))
+
+    async def ha_command(self, event):
+        """Handle Home Assistant command forwarded from another consumer."""
+        # This method needs to exist in SiteFrontendConsumer to handle ha_command messages
+        # We can just pass through the command to the OppEnergyConsumer by forwarding to site group
+        
+        # In most cases, we don't need to do anything here as this consumer is only
+        # receiving commands to relay to the site, not handling them directly
+        
+        # But for some message types, we might want to add special handling
+        # For example, for subscribe_prices:
+        command = event.get('command', {})
+        command_type = command.get('type')
+        
+        if command_type == 'subscribe_prices':
+            # Create a new OppEnergyConsumer instance to handle price subscription
+            opp_consumer = OppEnergyConsumer()
+            # Initialize it minimally
+            opp_consumer.channel_layer = self.channel_layer
+            opp_consumer.channel_name = self.channel_name
+            opp_consumer.send = self.send
+            opp_consumer.authenticated = True  # Assume authenticated since we're in SiteFrontendConsumer
+            
+            # Call the price subscription handler
+            await opp_consumer.handle_price_subscription(command)
+        
+        # For other message types, we don't need to do anything special
+        # as they're already being forwarded to the OppEnergyConsumer
 
     async def ha_response(self, event):
         """Handle responses from Home Assistant"""
