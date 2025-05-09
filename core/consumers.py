@@ -370,6 +370,22 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
         self.last_ping = datetime.now()
         await self.send(json.dumps({"type": "pong"}))
 
+    async def handle_price_subscription(self, data):
+        """Handle price subscription request."""
+        if not self.authenticated:
+            await self.send(json.dumps({
+                "type": "error",
+                "message": "Not authenticated"
+            }))
+            return
+
+        # Cancel existing price updates task if it exists
+        if self.price_updates_task:
+            self.price_updates_task.cancel()
+
+        # Start new price updates task
+        self.price_updates_task = asyncio.create_task(self.send_price_updates())
+
     async def handle_get_prices(self, data):
         """Handle request for current prices."""
         print("\n=== Price Request ===")
@@ -669,6 +685,28 @@ class OppEnergyConsumer(AsyncWebsocketConsumer):
                     "message": str(e)
                 }
             }))
+
+    async def check_connection(self, event):
+        """Check and update the connection status."""
+        site_id = event.get('site_id')
+        
+        # Update the site's connection status in the database
+        if hasattr(self, 'site') and self.site and str(self.site.id) == str(site_id):
+            # Update the connection status
+            self.site.ws_connected = self._is_connected()
+            self.site.last_connected = datetime.now() if self._is_connected() else self.site.last_connected
+            await database_sync_to_async(self.site.save)()
+            
+            # Notify any frontend consumers about the updated status
+            site_group = f"frontend_{site_id}"
+            await self.channel_layer.group_send(
+                site_group,
+                {
+                    'type': 'connection_status',
+                    'connected': self.site.ws_connected,
+                    'last_connected': self.site.last_connected.isoformat() if self.site.last_connected else None
+                }
+            )
 
 class SiteFrontendConsumer(AsyncWebsocketConsumer):
     """Consumer for frontend clients connecting to control Home Assistant"""

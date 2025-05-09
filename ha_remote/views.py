@@ -6,14 +6,13 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
 
 from core.models import Site
 
 # Get logger
 _LOGGER = logging.getLogger(__name__)
-
-# Define your integration's domain constant here
-OPP_ENERGY_DOMAIN = 'opp_energy'  # Replace with your actual domain
 
 @login_required
 def dashboard(request):
@@ -21,12 +20,8 @@ def dashboard(request):
     # Get sites owned by the user
     sites = Site.objects.filter(user=request.user)
     
-    # Check connection status if possible
-    try:
-        for site in sites:
-            site.ws_connected = check_ha_connection(site)
-    except Exception as e:
-        _LOGGER.error(f"Error checking HA connection status: {str(e)}")
+    # The connection status is already stored in the Site model
+    # No need to check it again here
     
     return render(request, 'dashboard.html', {
         'sites': sites
@@ -41,14 +36,8 @@ def site_interface(request, site_id):
     if site.user != request.user:
         return HttpResponseForbidden("You don't have access to this Home Assistant site")
     
-    # Check if coordinator is available (if Home Assistant is integrated)
-    try:
-        coordinator = get_site_coordinator(site)
-        if not coordinator:
-            messages.warning(request, f"Home Assistant integration for {site.name} is not connected.")
-    except Exception as e:
-        _LOGGER.error(f"Error checking coordinator: {str(e)}")
-        messages.warning(request, "Could not verify Home Assistant connection status.")
+    # We don't need to check for coordinator here - that happens when
+    # the WebSocket connection is established
     
     return render(request, 'site_interface.html', {
         'site': site
@@ -59,18 +48,14 @@ def site_status(request, site_id):
     """Check if a site has an active WebSocket connection."""
     site = get_object_or_404(Site, id=site_id, user=request.user)
     
-    # Check actual connection status if possible
-    connected = False
-    try:
-        connected = check_ha_connection(site)
-    except Exception as e:
-        _LOGGER.error(f"Error checking HA connection: {str(e)}")
+    # The site's connection status is stored in the database
+    # Just return that value
     
     return JsonResponse({
         'id': site.id,
         'name': site.name,
-        'connected': connected,
-        'last_connected': datetime.now().isoformat() if connected else None
+        'connected': site.ws_connected,
+        'last_connected': site.last_connected.isoformat() if site.last_connected else None
     })
 
 @login_required
@@ -90,66 +75,28 @@ def delete_site(request, site_id):
     messages.success(request, f"Site '{site_name}' has been deleted.")
     return redirect('dashboard')
 
-# Helper functions to interface with Home Assistant
-
-def get_hass_instance():
-    """
-    Get the Home Assistant instance from the Django app config.
-    Returns None if not available.
-    """
-    try:
-        from django.apps import apps
-        
-        hass_app = apps.get_app_config('ha_remote')
-        if hasattr(hass_app, 'hass'):
-            return hass_app.hass
-        
-        _LOGGER.warning("Home Assistant instance not found in app config")
-    except Exception as e:
-        _LOGGER.error(f"Error retrieving Home Assistant instance: {str(e)}")
+@login_required
+def refresh_connection(request, site_id):
+    """Attempt to refresh the Home Assistant connection for a site."""
+    site = get_object_or_404(Site, id=site_id, user=request.user)
     
-    return None
-
-def get_site_coordinator(site):
-    """
-    Get the OppEnergyDataUpdateCoordinator for a site.
-    Returns None if not found.
-    """
     try:
-        hass = get_hass_instance()
-        if not hass:
-            _LOGGER.warning("Home Assistant instance not available")
-            return None
+        # Use Channels to send a message to the OppEnergyConsumer
+        channel_layer = get_channel_layer()
         
-        # Look for the coordinator in the domain data
-        if OPP_ENERGY_DOMAIN not in hass.data:
-            _LOGGER.warning(f"Integration {OPP_ENERGY_DOMAIN} not loaded in Home Assistant")
-            return None
+        # Send to the site group
+        site_group = f"site_{site_id}"
+        async_to_sync(channel_layer.group_send)(
+            site_group,
+            {
+                "type": "check_connection",
+                "site_id": site_id
+            }
+        )
         
-        # Find coordinator matching the site
-        domain_data = hass.data[OPP_ENERGY_DOMAIN]
-        
-        for entry_id, data in domain_data.items():
-            # Check if this is a coordinator and if it matches the site
-            if hasattr(data, 'site_name') and data.site_name == site.name:
-                return data
-        
-        _LOGGER.warning(f"No coordinator found for site {site.name}")
+        messages.success(request, f"Connection refresh requested for {site.name}")
     except Exception as e:
-        _LOGGER.error(f"Error retrieving coordinator: {str(e)}")
+        _LOGGER.error(f"Error refreshing connection: {str(e)}")
+        messages.error(request, f"Could not refresh connection: {str(e)}")
     
-    return None
-
-def check_ha_connection(site):
-    """
-    Check if the Home Assistant WebSocket connection is active for this site.
-    Returns boolean indicating connection status.
-    """
-    try:
-        coordinator = get_site_coordinator(site)
-        if coordinator and hasattr(coordinator, '_is_connected'):
-            return coordinator._is_connected()
-        return False
-    except Exception as e:
-        _LOGGER.error(f"Error checking connection status: {str(e)}")
-        return False
+    return redirect('site_interface', site_id=site_id)

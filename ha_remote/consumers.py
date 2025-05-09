@@ -1,4 +1,17 @@
 # ha_remote/consumers.py
+### Frontend
+# The `SiteFrontendConsumer` in the core module handles direct web browser connections using the Django app's UI.
+#  Allows web users to view and control their Home Assistant sites through opp_cloud.
+# - **URL Pattern**: `ws/frontend/<str:site_id>/`
+
+# ### Remote
+# - The `HomeAssistantRelayConsumer` in the ha_remote module serves as a relay or bridge between the application and Home Assistant.
+# - Handles connections that relay commands between your web application and a remote Home Assistant instance.
+# - cts as an intermediary that forwards commands from web clients to Home Assistant and returns responses.
+# - `ws/ha/remote/<str:site_id>/`.
+
+
+
 import json
 import logging
 import asyncio
